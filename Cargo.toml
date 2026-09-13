@@ -6,7 +6,15 @@ publish = false
 
 [dependencies]
 azalea = "=0.16.0"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
+# The lock azalea keeps its ECS behind. Named here only to hold it, so the version follows azalea's.
+parking_lot = "0.12"
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "macros", "net", "io-util", "time", "sync"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt"] }
+
+[profile.release]
+lto = "thin"
 
 [patch.crates-io]
 azalea-chat = { path = "vendor/azalea-chat" }

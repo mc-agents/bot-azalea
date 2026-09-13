@@ -1,29 +1,32 @@
-use azalea::prelude::*;
-use azalea::Client;
-use azalea::account::Account;
+mod bot;
+mod calls;
+mod catalog;
+mod config;
+mod feeds;
+mod game;
+mod health;
+mod link;
+mod tools;
 
-#[tokio::main]
-async fn main() {
-    tokio::task::LocalSet::new().run_until(run()).await;
-}
+use std::rc::Rc;
 
-async fn run() {
-    let started = std::time::Instant::now();
-    let address = std::env::args().nth(1).unwrap_or_else(|| "localhost:25565".into());
-    let name = std::env::args().nth(2).unwrap_or_else(|| "spike".into());
-    let (client, mut events) = Client::join(Account::offline(&name), address.as_str())
-        .await
-        .expect("resolve");
+use crate::bot::Bot;
+use crate::config::Config;
 
-    while let Some(event) = events.recv().await {
-        match event {
-            Event::Spawn => println!("SPAWN after {}ms at {:?}", started.elapsed().as_millis(), client.position()),
-            Event::Chat(message) => println!("CHAT {}", message.message().to_ansi()),
-            Event::Disconnect(reason) => {
-                println!("DISCONNECT {reason:?}");
-                break;
-            }
-            _ => {}
-        }
-    }
+/// One thread for the link, every call and the game. azalea runs its ECS in a local task set, and a
+/// bot that is one process among fifty should not fan out a worker per core to do it.
+fn main() {
+    tracing_subscriber::fmt().with_target(false).init();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a single-threaded runtime");
+
+    let bot = Rc::new(Bot::new(Config::from_env()));
+
+    tokio::task::LocalSet::new().block_on(&runtime, async move {
+        tokio::task::spawn_local(health::serve(bot.clone()));
+        link::run(bot).await;
+    });
 }

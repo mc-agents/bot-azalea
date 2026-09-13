@@ -812,7 +812,11 @@ name = "bot-azalea"
 version = "0.1.0"
 dependencies = [
  "azalea",
+ "parking_lot",
+ "serde_json",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

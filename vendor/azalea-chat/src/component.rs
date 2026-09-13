@@ -61,15 +61,6 @@ impl FormattedText {
     }
 
     #[cfg(feature = "simdnbt")]
-    fn parse_separator_nbt(nbt: &simdnbt::borrow::NbtCompound) -> Option<FormattedText> {
-        use simdnbt::FromNbtTag;
-
-        if let Some(separator) = nbt.get("separator") {
-            FormattedText::from_nbt_tag(separator)
-        } else {
-            None
-        }
-    }
 
     /// Render all components into a single `String`, using your custom
     /// closures to drive styling, text transformation, and final cleanup.
