@@ -1,4 +1,7 @@
+mod args;
+mod blocks;
 mod chat;
+mod player;
 mod position;
 mod wait;
 
@@ -13,6 +16,8 @@ use crate::calls::{Failure, Outcome};
 use crate::catalog;
 use crate::game::Game;
 
+pub use player::game_mode;
+
 pub type Run = fn(Rc<Bot>, Value) -> Pin<Box<dyn Future<Output = Outcome>>>;
 
 pub struct Tool {
@@ -20,7 +25,14 @@ pub struct Tool {
     pub run: Run,
 }
 
-const TOOLS: &[Tool] = &[position::GET_POSITION, chat::SEND_CHAT, wait::WAIT_TICKS];
+const TOOLS: &[Tool] = &[
+    position::GET_POSITION,
+    player::GET_PLAYER_STATE,
+    blocks::GET_BLOCK_INFO,
+    blocks::FIND_BLOCKS,
+    chat::SEND_CHAT,
+    wait::WAIT_TICKS,
+];
 
 pub fn find(name: &str) -> Option<&'static Tool> {
     TOOLS.iter().find(|tool| tool.name == name)

@@ -37,11 +37,17 @@ pub struct Game {
     /// Set when the server told us to leave, so the disconnect that follows reads as leaving and
     /// not as being dropped.
     leaving: Cell<bool>,
+    cause_of_death: std::cell::RefCell<Option<String>>,
 }
 
 impl Game {
     pub fn spawned(&self) -> bool {
         self.spawned.get()
+    }
+
+    /// What killed the bot, while it is dead: the message the server sent with the death.
+    pub fn cause_of_death(&self) -> Option<String> {
+        self.cause_of_death.borrow().clone()
     }
 
     pub fn describe(&self, status: &mut Value) {
@@ -50,6 +56,13 @@ impl Game {
         if self.spawned() {
             let position = self.client.position();
             status["position"] = json!({"x": position.x, "y": position.y, "z": position.z});
+            status["dead"] = json!(self.client.get_component::<azalea::entity::Dead>().is_some());
+            if let Some(cause) = self.cause_of_death() {
+                status["causeOfDeath"] = json!(cause);
+            }
+            status["gameMode"] = json!(crate::tools::game_mode(
+                self.client.get_component::<azalea::local_player::LocalGameMode>().map(|mode| mode.current)
+            ));
         }
     }
 }
@@ -120,6 +133,7 @@ async fn join(bot: Rc<Bot>, host: String, port: u16, username: String, spawn_tim
         username: username.clone(),
         spawned: Cell::new(false),
         leaving: Cell::new(false),
+        cause_of_death: std::cell::RefCell::new(None),
     });
 
     let (joined, outcome) = oneshot::channel();
@@ -198,6 +212,17 @@ async fn pump(
                 }
             }
             Event::Tick => bot.ticks.send_modify(|ticks| *ticks += 1),
+            Event::Death(kill) => {
+                if let Some(game) = bot.game.borrow().as_ref().filter(|game| game.generation == generation) {
+                    *game.cause_of_death.borrow_mut() = kill.map(|kill| kill.message.to_string());
+                }
+                /*
+                Death does not end the connection, so the state stays ready and the status goes again
+                with dead set: a status that only moved with the state told a caller a dead bot was
+                ready to walk.
+                */
+                bot.status("ready", None);
+            }
             Event::Chat(packet) => feeds::chat(&bot, &packet),
             Event::ConnectionFailed(error) => {
                 if let Some(joined) = joined.take() {
