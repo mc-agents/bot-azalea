@@ -1,0 +1,129 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  REGISTRY: junhyung.cloud
+  IMAGE: junhyung.cloud/library/bot-azalea
+  # One per release of azalea, and the suffix every tag carries: the operator and the end-to-end
+  # suite compose a bot's image name as <tag>-mc<version>.
+  MINECRAFT: "26.1.2"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The version check diffs against the commit this one replaced.
+          fetch-depth: 0
+
+      - id: version
+        run: echo "value=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: version was raised
+        env:
+          FORCED: ${{ github.event.forced }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          EMPTY_SHA: '0000000000000000000000000000000000000000'
+        run: |
+          if [ "$FORCED" = true ] || [ -z "$BASE" ] || [ "$BASE" = "$EMPTY_SHA" ]; then
+            bash hack/check-version.sh
+          else
+            bash hack/check-version.sh "$BASE"
+          fi
+
+      # The image is the build: azalea needs a pinned nightly, and the Dockerfile is where it is
+      # pinned, so compiling anywhere else would be compiling something that does not ship.
+      - uses: docker/setup-buildx-action@v3
+      - name: it builds
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha,scope=check
+          cache-to: type=gha,scope=check,mode=max
+
+  # A Rust build under emulation is most of an hour. A native runner each, joined by a manifest list.
+  image:
+    needs: check
+    if: github.event_name != 'pull_request'
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}:${{ needs.check.outputs.version }}-${{ github.sha }}-${{ matrix.arch }}
+          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.arch }}
+          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.arch }},mode=max,image-manifest=true,oci-mediatypes=true
+
+  publish:
+    needs: [check, image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Lets cosign fetch a short-lived certificate from Fulcio, so no key lives in the repo.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+      - uses: sigstore/cosign-installer@v3
+
+      - id: manifest
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          BUILT: ${{ needs.check.outputs.version }}-${{ github.sha }}
+        run: |
+          set -eu
+          stamp=$(date -u +%Y%m%d%H%M%S)
+          sha=$(git rev-parse --short=8 HEAD)
+          case "$VERSION" in *-*) sep=. ;; *) sep=- ;; esac
+          for name in "${VERSION}-mc${MINECRAFT}" "${VERSION}${sep}${stamp}.g${sha}-mc${MINECRAFT}" "latest-mc${MINECRAFT}"; do
+            docker buildx imagetools create --tag "$IMAGE:$name" "$IMAGE:$BUILT-amd64" "$IMAGE:$BUILT-arm64"
+          done
+          digest=$(docker buildx imagetools inspect "$IMAGE:${VERSION}-mc${MINECRAFT}" --format '{{.Manifest.Digest}}')
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "release=${VERSION}-mc${MINECRAFT}" >> "$GITHUB_OUTPUT"
+
+      - name: sign image
+        run: cosign sign --yes "${{ env.IMAGE }}@${{ steps.manifest.outputs.digest }}"
+
+      - run: |
+          {
+            echo "published \`$IMAGE:${{ steps.manifest.outputs.release }}\`"
+            echo ""
+            echo "verify:"
+            echo '```'
+            echo "cosign verify $IMAGE:${{ steps.manifest.outputs.release }} \\"
+            echo "  --certificate-identity-regexp '^https://github.com/${{ github.repository }}/' \\"
+            echo "  --certificate-oidc-issuer https://token.actions.githubusercontent.com"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
