@@ -14,6 +14,7 @@ use super::windows::{OFF_HAND, click};
 use super::{Tool, alive, game_mode, in_world, stacks};
 use crate::bot::Bot;
 use crate::calls::{Answer, Failure};
+use crate::game::Game;
 
 /// The player's inventory window, as the server numbers it: 5-8 worn, 9-35 the bag, 36-44 the
 /// hotbar, 45 the off-hand.
@@ -43,6 +44,11 @@ fn player_menu(inventory: &Inventory) -> Menu {
     menu
 }
 
+/// Ticks left on a stack's cooldown group, counted against the ticks the bot has run.
+fn cooldown(bot: &Bot, game: &Game, stack: &ItemStack) -> Option<u64> {
+    game.hud.borrow().cooldown_left(&stacks::cooldown_group(stack), *bot.ticks.borrow())
+}
+
 pub const LIST_INVENTORY: Tool = Tool {
     name: "list-inventory",
     run: |bot, _args| {
@@ -54,7 +60,7 @@ pub const LIST_INVENTORY: Tool = Tool {
                     .iter()
                     .enumerate()
                     .filter(|(_, stack)| !stack.is_empty())
-                    .map(|(slot, stack)| stacks::carried(stack, slot))
+                    .map(|(slot, stack)| stacks::carried(stack, slot, cooldown(&bot, game, stack)))
                     .collect::<Vec<_>>()
             })?;
             Ok(Answer::data("list-inventory", json!({"items": items})))
@@ -75,7 +81,7 @@ pub const FIND_ITEM: Tool = Tool {
                     .iter()
                     .enumerate()
                     .find(|(_, stack)| !stack.is_empty() && stacks::matches(stack, &query))
-                    .map(|(slot, stack)| stacks::carried(stack, slot))
+                    .map(|(slot, stack)| stacks::carried(stack, slot, cooldown(&bot, game, stack)))
             })?;
             Ok(Answer::data("find-item", json!({"query": query, "item": item})))
         })
@@ -97,6 +103,18 @@ pub const EQUIP_ITEM: Tool = Tool {
 
             let (source, item, selected) = alive(&bot, |game| {
                 let inventory = game.client.component::<Inventory>();
+
+                /*
+                With a window open the server takes clicks for that window only, and drops these
+                without a word: the tool used to answer "Equipped" for an item that never moved. A
+                player cannot reach their own inventory from behind a chest either.
+                */
+                if inventory.container_menu.is_some() {
+                    return Err(Failure::refused(
+                        "WINDOW_OPEN",
+                        "A window is open, and equip-item works in the bot's own inventory. Close it with close-window first.",
+                    ));
+                }
                 let menu = player_menu(&inventory);
                 let found = menu
                     .slots()

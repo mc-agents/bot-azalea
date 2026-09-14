@@ -75,6 +75,8 @@ fn kept(packet: &ClientboundGamePacket) -> bool {
             | P::PlayerInfoUpdate(_)
             | P::PlayerInfoRemove(_)
             | P::CommandSuggestions(_)
+            | P::SetPassengers(_)
+            | P::Cooldown(_)
             | P::Login(_)
             | P::Respawn(_)
             | P::StartConfiguration(_)
@@ -127,6 +129,13 @@ pub struct Hud {
     listed: HashSet<u128>,
     completions: HashMap<u32, oneshot::Sender<Suggestions>>,
     next_completion: u32,
+    /// Who rides what, by network id: a vehicle and its passengers. azalea drops the packet that
+    /// says so, and a vehicle that has since left the world can still be in here, so a reader
+    /// checks the vehicle is loaded before believing it.
+    passengers: HashMap<i32, Vec<i32>>,
+    /// The tick each cooling cooldown group comes free on, counted in the bot's own ticks the way
+    /// the client counts them.
+    cooldowns: HashMap<String, u64>,
     pub logins: u64,
 }
 
@@ -151,6 +160,16 @@ impl Hud {
         entries.sort_by(|a, b| b.1.value.cmp(&a.1.value).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
 
         Some((objective, entries))
+    }
+
+    /// The vehicle an entity sits on, by network id.
+    pub fn vehicle_of(&self, passenger: i32) -> Option<i32> {
+        self.passengers.iter().find(|(_, riders)| riders.contains(&passenger)).map(|(vehicle, _)| *vehicle)
+    }
+
+    /// Ticks until a cooldown group comes free, or None when it is free now.
+    pub fn cooldown_left(&self, group: &str, ticks_now: u64) -> Option<u64> {
+        self.cooldowns.get(group).map(|end| end.saturating_sub(ticks_now)).filter(|left| *left > 0)
     }
 
     pub fn listed(&self, uuid: u128) -> bool {
@@ -327,6 +346,22 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
                 }
             }
         }
+        P::SetPassengers(p) => {
+            if p.passengers.is_empty() {
+                hud.passengers.remove(&p.vehicle.0);
+            } else {
+                hud.passengers.insert(p.vehicle.0, p.passengers.iter().map(|id| id.0).collect());
+            }
+        }
+        P::Cooldown(p) => {
+            /* A duration of zero is how the server ends one early. */
+            let group = p.cooldown_group.to_string();
+            if p.duration == 0 {
+                hud.cooldowns.remove(&group);
+            } else {
+                hud.cooldowns.insert(group, ticks + u64::from(p.duration));
+            }
+        }
         P::PlayerInfoRemove(p) => {
             for uuid in &p.profile_ids {
                 hud.listed.remove(&uuid.as_u128());
@@ -348,9 +383,12 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
             hud.dimension = Some((p.common.dimension_type, p.common.dimension.clone()));
         }
         P::Respawn(p) => {
-            /* A new level on the client, which starts dry until the server says otherwise. */
+            /* A new level on the client, which starts dry and with nobody riding anything until the server says otherwise. */
             hud.rain = 0.0;
             hud.thunder = 0.0;
+            hud.passengers.clear();
+            /* The client makes a new player on respawn, and the cooldowns belonged to the old one. */
+            hud.cooldowns.clear();
             hud.dimension = Some((p.common.dimension_type, p.common.dimension.clone()));
         }
         _ => {}

@@ -67,6 +67,9 @@ docker run --rm -e MCP_SERVER_HOST=host.docker.internal -e BOT_NAME=a1 bot-azale
   it, and a number-key swap or a drag comes out differently from the game's. Every click goes with
   a state id the server never holds, which makes it answer with the whole window, and the tool reads
   that. The state id and cursor azalea drops from those answers are put back by the bot.
+- **`vendor/azalea-protocol`.** azalea decodes the cooldown packet as an item where 26.x sends a
+  cooldown group, so every cooldown a server started arrived as nonsense. One struct is changed;
+  `vendor/azalea-protocol/PATCHED.md` says which and when the directory can go.
 - **No automatic respawn or reconnect.** A server under test may be checking what happens on death
   or on a kick, and a bot that got up or rejoined by itself would hide exactly that.
 

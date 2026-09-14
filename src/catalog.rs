@@ -9,7 +9,7 @@ pub const ARGS_HASHES: &[(&str, &str)] = &[
     ("attack-entity", "sha256:ad34f9f2602d72747786a2ad0758c1debc3e06367a46ff110d04dd4636edd27a"),
     ("can-craft", "sha256:ff3fc389c507c53b6579cb9f27e960030ff0819170a6554d70c117b705d10fc6"),
     ("click-chat", "sha256:129f1a323b4b58b410c8e4ae2857cf7c63294809cead493121856292daaf4a89"),
-    ("click-slot", "sha256:e73d8185908341ecc5ec628d7447dc888db0d4753fa468983a53b05c659a0af7"),
+    ("click-slot", "sha256:1daccb57f61d8687ddb3b0e5a2206ad465fdecd3d6caf83568032c987e70f54b"),
     ("close-window", "sha256:d746974fa9afd5e951f76f9af38954b0ad7f436f2120dc974da65e5ee39f856f"),
     ("complete-command", "sha256:937b4b843b9e6bec05bff52a534955be179725d519c0836dab5568e0e47428d8"),
     ("craft-item", "sha256:6eabdd8f7377be1796b386f6580f7b9d6d26e94007e165598a78f628b45d1545"),

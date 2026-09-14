@@ -28,3 +28,4 @@ lto = "thin"
 
 [patch.crates-io]
 azalea-chat = { path = "vendor/azalea-chat" }
+azalea-protocol = { path = "vendor/azalea-protocol" }

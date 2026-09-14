@@ -18,7 +18,7 @@ use super::args::{boolean, integer, plain, position, text, text_or, written};
 use super::text::component;
 use super::{Tool, alive, in_world, stacks, tick};
 use crate::bot::Bot;
-use crate::calls::{Answer, Failure};
+use crate::calls::{Answer, Failure, Outcome};
 
 /// A player inventory is 36 slots wherever it is attached.
 const PLAYER_INVENTORY_SLOTS: usize = 36;
@@ -363,12 +363,23 @@ pub const CLICK_SLOT: Tool = Tool {
     run: |bot, args| {
         Box::pin(async move {
             let slot = integer(&args, "slot", -1)?;
+            let outside = boolean(&args, "outside", false)?;
             let button = text(&args, "button")?.to_owned();
             let shift = boolean(&args, "shift", false)?;
             let mode = text_or(&args, "mode", "click")?.to_owned();
             let hotbar = integer(&args, "hotbar", 0)?;
 
             let window = alive(&bot, |game| require(&game.client))??;
+
+            if outside {
+                if slot >= 0 || mode != "click" || shift {
+                    return Err(Failure::bad_args("a click outside the window is a plain click, and takes no slot, mode or shift"));
+                }
+                return click_outside(&bot, &window, button).await;
+            }
+            if slot < 0 {
+                return Err(Failure::bad_args("click-slot needs a slot, or outside for a click outside the window"));
+            }
 
             if slot < 0 || slot >= window.menu.len() as i64 {
                 return Err(out_of_range(slot, &window.menu));
@@ -412,6 +423,7 @@ pub const CLICK_SLOT: Tool = Tool {
                 "click-slot",
                 json!({
                     "slot": slot,
+                    "outside": false,
                     "button": button,
                     "shift": shift,
                     "mode": mode,
@@ -425,6 +437,31 @@ pub const CLICK_SLOT: Tool = Tool {
         })
     },
 };
+
+/// A click outside the window drops the cursor: all of it on the left button, one item on the right.
+/// It lands on no slot, so what goes back as before and after is the cursor.
+async fn click_outside(bot: &Bot, window: &Window, button: String) -> Outcome {
+    let before = in_world(bot, |game| game.client.component::<Inventory>().carried.clone())?;
+
+    click(bot, window.id, OUTSIDE, u8::from(button == "right"), ClickType::Pickup).await?;
+
+    let after = in_world(bot, |game| game.client.component::<Inventory>().carried.clone())?;
+    Ok(Answer::data(
+        "click-slot",
+        json!({
+            "slot": null,
+            "outside": true,
+            "button": button,
+            "shift": false,
+            "mode": "click",
+            "hotbar": null,
+            "before": stacks::held(&before),
+            "after": stacks::held(&after),
+            "cursor": stacks::held(&after),
+            "swapped": null,
+        }),
+    ))
+}
 
 /// The off-hand's index in the player's inventory, which is what a swap's button names.
 pub const OFF_HAND: u8 = 40;

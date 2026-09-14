@@ -1,10 +1,11 @@
+use azalea::block::{BlockState, BlockTrait};
 use azalea::buf::AzBufVar;
 use azalea::core::delta::LpVec3;
 use azalea::core::entity_id::MinecraftEntityId;
 use azalea::ecs::entity::Entity;
 use azalea::ecs::query::{Has, Without};
 use azalea::entity::dimensions::EntityDimensions;
-use azalea::entity::metadata::{AbstractInsentient, CustomName, Player};
+use azalea::entity::metadata::{AbstractInsentient, BlockDisplayBlockState, CustomName, ItemDisplayItemStack, Player};
 use azalea::entity::{EntityKindComponent, EntityUuid, LocalEntity, Position};
 use azalea::protocol::packets::game::s_attack::ServerboundAttack;
 use azalea::protocol::packets::game::s_interact::{InteractionHand, ServerboundInteract};
@@ -38,6 +39,9 @@ struct Seen {
     distance: f32,
     player: bool,
     mob: bool,
+    /// What an item display holds up, or what a block display draws; null for every other entity.
+    item: Value,
+    block: Value,
 }
 
 impl Seen {
@@ -66,6 +70,8 @@ impl Seen {
             "type": self.kind,
             "position": point(BlockPos::from(self.position)),
             "distance": (f64::from(self.distance) * 10.0 + 0.5).floor() / 10.0,
+            "item": self.item,
+            "block": self.block,
         })
     }
 }
@@ -92,12 +98,13 @@ fn nearby(client: &Client) -> Vec<Seen> {
         Option<&EntityUuid>,
         Has<Player>,
         Has<AbstractInsentient>,
+        (Option<&ItemDisplayItemStack>, Option<&BlockDisplayBlockState>),
     ), Without<LocalEntity>>();
 
     let mut seen: Vec<Seen> = query
         .iter(&ecs)
         .filter(|(_, name, ..)| **name == world)
-        .map(|(entity, _, position, kind, custom, uuid, player, mob)| {
+        .map(|(entity, _, position, kind, custom, uuid, player, mob, (item, block))| {
             let kind = plain(kind.0.to_str());
             let custom = custom.and_then(|name| name.0.as_deref().cloned());
             let label = match (&custom, uuid.and_then(|uuid| players.get(uuid))) {
@@ -116,12 +123,24 @@ fn nearby(client: &Client) -> Vec<Seen> {
                 distance: (dx * dx + dy * dy + dz * dz).sqrt(),
                 player,
                 mob,
+                /*
+                Every display is called item_display or block_display, and what tells a chair from
+                a signpost is what it shows. The metadata is only there on the kind it belongs to.
+                */
+                item: item.map_or(Value::Null, |item| stacks::shown(&item.0)),
+                block: block.map_or(Value::Null, |block| block_state(block.0)),
             }
         })
         .collect();
 
     seen.sort_by(|a, b| a.distance.total_cmp(&b.distance));
     seen
+}
+
+/// A block state as its name and its properties, the way the game names both.
+fn block_state(state: BlockState) -> Value {
+    let block = Box::<dyn BlockTrait>::from(state);
+    json!({"name": block.id(), "properties": block.property_map()})
 }
 
 /// The nearest entity answering to what a caller typed, or a refusal naming what was in range
