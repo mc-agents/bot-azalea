@@ -16,10 +16,14 @@ pub const GET_BLOCK_INFO: Tool = Tool {
             let at = position(&args)?;
             let state = in_world(&bot, |game| game.client.world().read().get_block_state(at))?;
 
-            /* Outside the loaded chunks there is nothing to say about the block, which is not air. */
+            /*
+            Outside the loaded chunks there is nothing to say about the block, which is not air. The
+            name goes without its namespace, as the other kind of bot sends it: the server words the
+            DTO as it arrives, and "minecraft:dirt" from one kind is a second answer to one block.
+            */
             let block = state.map(|state| {
                 let kind = BlockKind::from(state);
-                json!({"name": kind.to_str(), "type": kind.to_u32(), "position": point(at)})
+                json!({"name": plain(kind.to_str()), "type": kind.to_u32(), "position": point(at)})
             });
             Ok(Answer::data(format!("block at {}, {}, {}", at.x, at.y, at.z), json!({"position": point(at), "block": block})))
         })
