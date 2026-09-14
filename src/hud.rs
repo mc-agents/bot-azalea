@@ -142,6 +142,9 @@ pub struct Hud {
     /// The end credits are up. The client shows them for any win-game event, whatever its value,
     /// and they hold the player outside every world until it asks to respawn.
     pub credits: bool,
+    /// A dialog the server put up and has not cleared. This kind of bot cannot press one away, so only
+    /// the server or a new world ends it.
+    pub dialog_open: bool,
 }
 
 pub enum Slot {
@@ -226,11 +229,15 @@ pub fn apply(bot: &Bot, packet: &ClientboundGamePacket) {
         P::SetTitleText(p) => feeds::title(bot, "title", &p.text),
         P::SetSubtitleText(p) => feeds::title(bot, "subtitle", &p.text),
         P::ShowDialog(p) => {
+            dialog_open(bot, true);
             if let Some(dialog) = dialog(bot, &p.dialog) {
                 feeds::dialog(bot, dialog);
             }
         }
-        P::ClearDialog(_) => feeds::dialog_closed(bot),
+        P::ClearDialog(_) => {
+            dialog_open(bot, false);
+            feeds::dialog_closed(bot);
+        }
         P::Sound(p) => feeds::sound(bot, match &p.sound {
             Holder::Reference(sound) => sound.to_str().to_owned(),
             Holder::Direct(custom) => custom.sound_id.to_string(),
@@ -250,6 +257,12 @@ pub fn apply(bot: &Bot, packet: &ClientboundGamePacket) {
                 _ => {}
             }
         }
+    }
+}
+
+fn dialog_open(bot: &Bot, open: bool) {
+    if let Some(game) = bot.game.borrow().as_ref() {
+        game.hud.borrow_mut().dialog_open = open;
     }
 }
 

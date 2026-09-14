@@ -9,6 +9,7 @@ use azalea::entity::inventory::Inventory;
 use azalea::entity::metadata::AbstractLivingUsingItem;
 use azalea::interact::BlockStatePredictionHandler;
 use azalea::local_player::LocalGameMode;
+use azalea::mining::{MiningQueued, StopMiningBlockEvent};
 use azalea::protocol::packets::game::s_interact::InteractionHand;
 use azalea::protocol::packets::game::s_player_action::{Action, ServerboundPlayerAction};
 use azalea::protocol::packets::game::{ServerboundUseItem, ServerboundUseItemOn};
@@ -21,7 +22,7 @@ use tokio::sync::broadcast::error::RecvError;
 use super::args::{integer, text};
 use super::entities::{attack, interact};
 use super::windows::swing;
-use super::{Tool, alive};
+use super::{Tool, alive, tick};
 use crate::calls::{Answer, Failure};
 
 const TICK_MS: u64 = 50;
@@ -31,6 +32,9 @@ const USE_DELAY_TICKS: u32 = 4;
 
 /// What a survival client waits after a click that hit nothing before the next one swings.
 const MISS_TICKS: u32 = 10;
+
+/// How long a block the button was let go of can still be on its way to starting to break.
+const SETTLE_TICKS: u32 = 3;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Key {
@@ -125,7 +129,9 @@ pub const PRESS_INPUT: Tool = Tool {
             let slot = if key == Key::Hotbar { slot } else { None };
 
             let client = alive(&bot, |game| game.client.clone())?;
-            if client.get_component::<Inventory>().is_some_and(|inventory| inventory.container_menu.is_some()) {
+            /* A dialog is a screen on the other kind of bot, and keys go to it there too. */
+            let dialog = alive(&bot, |game| game.hud.borrow().dialog_open)?;
+            if dialog || client.get_component::<Inventory>().is_some_and(|inventory| inventory.container_menu.is_some()) {
                 return Err(Failure::refused("WINDOW_OPEN", "a window is open, and keys go to it rather than to the game; close-window first."));
             }
             let sequence = (u64::from(repeat) * u64::from(hold) + u64::from(repeat - 1) * u64::from(interval)) * TICK_MS;
@@ -218,6 +224,13 @@ pub const PRESS_INPUT: Tool = Tool {
                 }
             }
 
+            /* A break that was on its way when the button came up is caught on the ticks after. */
+            if key == Key::Attack {
+                for _ in 0..SETTLE_TICKS {
+                    tick(&bot).await;
+                    keys.tick();
+                }
+            }
             let selected = alive(&bot, |game| game.client.selected_hotbar_slot())?;
             let mut after_value = after.as_ref().map_or(Value::Null, |after| after.describe(after_matched.as_deref()));
             if !after_value.is_null() {
@@ -254,12 +267,11 @@ struct Keys {
     before: bool,
     held_ticks: u32,
     miss_ticks: u32,
-    breaking: Option<BlockPos>,
 }
 
 impl Keys {
     fn new(client: Client, key: Key, slot: u8) -> Keys {
-        Keys { client, key, slot, down: false, before: false, held_ticks: 0, miss_ticks: 0, breaking: None }
+        Keys { client, key, slot, down: false, before: false, held_ticks: 0, miss_ticks: 0 }
     }
 
     fn press(&mut self) {
@@ -299,6 +311,9 @@ impl Keys {
     /// Every tick, pressed or not: the miss cooldown runs down either way, and a held use goes again.
     fn tick(&mut self) {
         self.miss_ticks = self.miss_ticks.saturating_sub(1);
+        if !self.down && self.key == Key::Attack {
+            self.stop_mining();
+        }
         if self.down && self.key == Key::Use {
             self.held_ticks += 1;
             if self.held_ticks % USE_DELAY_TICKS == 0 && !self.using() {
@@ -321,15 +336,26 @@ impl Keys {
             }
             /* The client tells the server it let go only of an item that was in use: a drawn bow, food. */
             Key::Use if self.using() => client.write_packet(action(Action::ReleaseUseItem, BlockPos::default(), 0)),
-            /* Nobody holds the button on a block through a bot, so a block that did not break is let go of. */
+            /* Let go before a block broke, the client tells the server it stopped. */
             Key::Attack => {
-                if let Some(pos) = self.breaking.take()
-                    && !self.creative()
-                {
-                    client.write_packet(action(Action::AbortDestroyBlock, pos, 0));
-                }
+                client.left_click_mine(false);
+                self.stop_mining();
             }
             _ => {}
+        }
+    }
+
+    /// Give up on the block being broken, if any.
+    ///
+    /// A block the button was held on starts breaking a tick or two after the button went down: the
+    /// left-click mining asks, the next update queues it and the tick after that starts. A button let
+    /// go of in between finds nothing to stop, and what it started then breaks the block on its own.
+    /// So the start still waiting is taken away, and this runs again on the ticks after a release.
+    fn stop_mining(&self) {
+        let client = &self.client;
+        client.ecs.write().entity_mut(client.entity).remove::<MiningQueued>();
+        if client.is_mining() {
+            client.ecs.write().write_message(StopMiningBlockEvent { entity: client.entity });
         }
     }
 
@@ -343,10 +369,16 @@ impl Keys {
 
     /// A right-click at what the bot is looking at, with the main hand, as the client makes one.
     ///
-    /// On a block the client sends the click on the block, and when the block does nothing with it,
-    /// uses the item as well -- which is how a rod cast at the ground still casts. Whether the block
-    /// did anything is the client's own prediction and not something azalea keeps, so the item is used
-    /// unless it is a block, which the click has placed.
+    /// On a block the client asks the block first and the item after. A block that does something
+    /// with the click -- a chest opening, a door swinging, a button going down -- takes it, and the
+    /// item is not used; a block that does nothing passes it on, and the item's own use on a block
+    /// comes next, which for a block item is placing it. Only a click nothing took uses the item in
+    /// the air as well, which is how a rod cast at the ground still casts. Crouching with something
+    /// in hand skips the block, the way it lets a player place against a chest.
+    ///
+    /// The game decides that on the client from its own block and item code, which azalea does not
+    /// have, so the blocks a click opens or toggles whatever is in hand are named here, and an item
+    /// is taken to be placed when a block goes by its name.
     fn use_item(&self) {
         let client = &self.client;
         match client.hit_result() {
@@ -357,8 +389,16 @@ impl Keys {
                 if !hit.miss {
                     let seq = self.predict();
                     client.write_packet(ServerboundUseItemOn { hand: InteractionHand::MainHand, block_hit: (&hit).into(), seq });
-                    let held = client.component::<Inventory>().held_item().clone();
-                    if held.is_empty() || BlockKind::from_str(held.kind().to_str()).is_ok() {
+
+                    let inventory = client.component::<Inventory>();
+                    let held = inventory.held_item().clone();
+                    let has_items = !held.is_empty() || !inventory.inventory_menu.as_player().offhand.is_empty();
+                    drop(inventory);
+                    let clicked = client.world().read().get_block_state(hit.block_pos).map(BlockKind::from);
+
+                    let block_took_it = !(client.crouching() && has_items) && clicked.is_some_and(interactive);
+                    if block_took_it || held.is_empty() || BlockKind::from_str(held.kind().to_str()).is_ok() {
+                        swing(client);
                         return;
                     }
                 }
@@ -369,27 +409,22 @@ impl Keys {
         }
     }
 
-    /// A left-click: a hit on an entity, a start at breaking a block, or a swing at the air.
+    /// A left-click: a hit on an entity, or a swing at the air with a survival client's miss cooldown.
+    ///
+    /// A block is not hit here. Holding the button is what breaks one, and azalea's own left-click
+    /// mining is that hold: it starts on the block looked at, sends the progress a survival client
+    /// sends, moves on to the next block and stops on a miss, for as long as it stays on.
     fn attack(&mut self) {
+        let client = &self.client;
+        client.left_click_mine(true);
         if self.miss_ticks > 0 {
             return;
         }
-        let client = &self.client;
         match client.hit_result() {
             HitResult::Entity(hit) => {
                 let _ = attack(client, hit.entity, Some(hit.location));
             }
-            HitResult::Block(hit) if !hit.miss => {
-                let seq = self.predict();
-                client.write_packet(ServerboundPlayerAction {
-                    action: Action::StartDestroyBlock,
-                    pos: hit.block_pos,
-                    direction: hit.direction,
-                    seq,
-                });
-                swing(client);
-                self.breaking = Some(hit.block_pos);
-            }
+            HitResult::Block(hit) if !hit.miss => {}
             HitResult::Block(_) => {
                 swing(client);
                 if !self.creative() {
@@ -411,6 +446,20 @@ impl Drop for Keys {
         }
         self.release();
     }
+}
+
+/// A block that takes a right-click whatever is in hand: it opens, toggles, rings or is sat in, and
+/// the client uses nothing after it. Iron doors and trapdoors open only by redstone and pass it on.
+fn interactive(block: BlockKind) -> bool {
+    const TAKEN_BY: &[&str] = &[
+        "chest", "barrel", "shulker_box", "furnace", "smoker", "hopper", "dispenser", "dropper", "crafter",
+        "brewing_stand", "crafting_table", "anvil", "enchanting_table", "grindstone", "loom", "stonecutter",
+        "cartography_table", "smithing_table", "lectern", "beacon", "door", "trapdoor", "fence_gate", "button",
+        "lever", "_bed", "bell", "repeater", "comparator", "daylight_detector", "note_block", "cake", "jukebox",
+        "respawn_anchor", "command_block", "sign", "structure_block", "jigsaw",
+    ];
+    let name = block.to_str();
+    !name.starts_with("minecraft:iron_") && TAKEN_BY.iter().any(|part| name.contains(part))
 }
 
 fn action(action: Action, pos: BlockPos, seq: u32) -> ServerboundPlayerAction {
