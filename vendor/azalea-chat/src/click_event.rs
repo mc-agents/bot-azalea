@@ -86,8 +86,13 @@ define_click_event_struct! {
     suggest_command: SuggestCommand {
         command: String,
     },
-    // TODO: this uses Dialog.CODEC
-    show_dialog: ShowDialog {},
+    // mc-agents: the dialog was dropped here, so a click that opens one opened nothing. It is kept
+    // as the NBT it arrived in -- a dialog inline, or the id of one in the dialog registry -- because
+    // resolving a reference needs the registries, which this crate does not have.
+    show_dialog: ShowDialog {
+        #[cfg(feature = "simdnbt")]
+        dialog: simdnbt::owned::NbtTag,
+    },
     change_page: ChangePage {
         page: i32,
     },

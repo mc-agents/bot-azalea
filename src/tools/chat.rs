@@ -1,9 +1,12 @@
 use azalea::FormattedText;
 use azalea_chat::click_event::ClickEvent;
+use serde_json::Value;
+use simdnbt::owned::NbtTag;
 
 use super::args::text;
 use super::{Tool, in_world, tick};
 use crate::calls::{Answer, Failure};
+use crate::hud;
 
 pub const SEND_CHAT: Tool = Tool {
     name: "send-chat",
@@ -57,19 +60,29 @@ pub const CLICK_CHAT: Tool = Tool {
                 }
             };
 
+            let mut opened = None;
             match &found.event {
                 ClickEvent::RunCommand { command } => {
                     let command = command.strip_prefix('/').unwrap_or(command).to_owned();
                     in_world(&bot, |game| game.client.write_command_packet(&command))?;
                 }
-                ClickEvent::ShowDialog {} => {
-                    return Err(Failure::refused(
-                        "CLICK_NOT_SUPPORTED",
-                        format!(
-                            "\"{}\" is a show_dialog click, and this kind of bot cannot press it: the dialog the click carries is dropped when the chat line is read.",
-                            found.text
-                        ),
-                    ));
+                ClickEvent::ShowDialog { dialog } => {
+                    /*
+                    The client opens it on its own screen and tells the server nothing, so the dialog
+                    goes where one the server sent would: the dialog feed, and on screen to be pressed.
+                    */
+                    let shown = in_world(&bot, |_| match dialog {
+                        NbtTag::String(id) => hud::registered_dialog(&bot, &id.to_str()),
+                        inline => serde_json::to_value(inline).ok(),
+                    })?;
+                    let Some(shown) = shown else {
+                        return Err(Failure::refused(
+                            "NO_SUCH_DIALOG",
+                            format!("\"{}\" shows a dialog the server never declared, so there is nothing to open.", found.text),
+                        ));
+                    };
+                    opened = Some(screen(&shown));
+                    hud::show_dialog(&bot, Some(shown));
                 }
                 other => {
                     return Err(Failure::refused(
@@ -87,7 +100,8 @@ pub const CLICK_CHAT: Tool = Tool {
             for _ in 0..SETTLE_TICKS {
                 tick(&bot).await;
             }
-            Ok(Answer::text(format!("clicked {}.", found.describe())))
+            let opened = opened.map(|screen| format!(", and {screen} opened")).unwrap_or_default();
+            Ok(Answer::text(format!("clicked {}{opened}.", found.describe())))
         })
     },
 };
@@ -116,7 +130,7 @@ fn action(event: &ClickEvent) -> &'static str {
         ClickEvent::OpenFile { .. } => "open_file",
         ClickEvent::RunCommand { .. } => "run_command",
         ClickEvent::SuggestCommand { .. } => "suggest_command",
-        ClickEvent::ShowDialog {} => "show_dialog",
+        ClickEvent::ShowDialog { .. } => "show_dialog",
         ClickEvent::ChangePage { .. } => "change_page",
         ClickEvent::CopyToClipboard { .. } => "copy_to_clipboard",
         ClickEvent::Custom { .. } => "custom",
@@ -131,6 +145,17 @@ fn clickable(line: &FormattedText) -> Vec<Clickable> {
         return vec![Clickable { text: line.to_string(), event: event.clone() }];
     }
     base.siblings.iter().flat_map(clickable).collect()
+}
+
+/// The client's own name for the screen a dialog is drawn on, which is what the other kind of bot
+/// says opened.
+fn screen(dialog: &Value) -> &'static str {
+    match dialog.get("type").and_then(Value::as_str).map(|kind| kind.strip_prefix("minecraft:").unwrap_or(kind)) {
+        Some("multi_action") => "MultiButtonDialogScreen",
+        Some("dialog_list") => "DialogListDialogScreen",
+        Some("server_links") => "ServerLinksDialogScreen",
+        _ => "SimpleDialogScreen",
+    }
 }
 
 fn pick<'a>(offered: &'a [Clickable], wanted: &str) -> Option<&'a Clickable> {

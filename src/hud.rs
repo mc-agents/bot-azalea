@@ -233,15 +233,7 @@ pub fn apply(bot: &Bot, packet: &ClientboundGamePacket) {
         P::SetActionBarText(p) => feeds::action_bar(bot, "actionbar", &p.text),
         P::SetTitleText(p) => feeds::title(bot, "title", &p.text),
         P::SetSubtitleText(p) => feeds::title(bot, "subtitle", &p.text),
-        P::ShowDialog(p) => {
-            let dialog = dialog(bot, &p.dialog);
-            if let Some(dialog) = &dialog {
-                feeds::dialog(bot, dialog.clone());
-            }
-            if let Some(game) = bot.game.borrow().as_ref() {
-                game.hud.borrow_mut().dialog = Some(Open::new(dialog.unwrap_or(Value::Null)));
-            }
-        }
+        P::ShowDialog(p) => show_dialog(bot, dialog(bot, &p.dialog)),
         P::ClearDialog(_) => {
             if let Some(game) = bot.game.borrow().as_ref() {
                 game.hud.borrow_mut().dialog = None;
@@ -268,6 +260,28 @@ pub fn apply(bot: &Bot, packet: &ClientboundGamePacket) {
             }
         }
     }
+}
+
+/// A dialog coming up on screen, whichever way it came: sent by the server, or opened by the client
+/// itself from a chat line's click. Both are the same dialog to a player, so both are the same here.
+/// It is open even when it could not be read, because keys go to it either way.
+pub fn show_dialog(bot: &Bot, dialog: Option<Value>) {
+    if let Some(dialog) = &dialog {
+        feeds::dialog(bot, dialog.clone());
+    }
+    if let Some(game) = bot.game.borrow().as_ref() {
+        game.hud.borrow_mut().dialog = Some(Open::new(dialog.unwrap_or(Value::Null)));
+    }
+}
+
+/// A dialog the server declared, by its id in the dialog registry.
+pub fn registered_dialog(bot: &Bot, id: &str) -> Option<Value> {
+    let game = bot.game.borrow();
+    let client = &game.as_ref()?.client;
+    client.with_registry_holder(|registries| {
+        let entries = registries.extra.get(&Identifier::new("minecraft:dialog"))?;
+        entries.map.get(&Identifier::new(id)).and_then(|nbt| serde_json::to_value(nbt).ok())
+    })
 }
 
 fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {

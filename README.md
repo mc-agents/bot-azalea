@@ -57,8 +57,8 @@ docker run --rm -e MCP_SERVER_HOST=host.docker.internal -e BOT_NAME=a1 bot-azale
 
 - **`vendor/azalea-chat`.** A keybind, selector, score, nbt or object component made azalea fail
   the decode of the whole packet, so the chat line it was in never reached the bot and all that was
-  left was a log line. Those now stand in as text naming what could not be resolved. The rest of
-  the crate is as released.
+  left was a log line. Those now stand in as text naming what could not be resolved. A click event
+  that shows a dialog keeps the dialog, which azalea dropped. The rest of the crate is as released.
 - **The attack packet is written by the bot.** azalea writes the target's id as a four-byte int
   where the game reads a VarInt, and the server drops the connection of a bot that swings. So is
   the interact packet: azalea sends the click as a position in the world, where the game sends it
