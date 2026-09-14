@@ -10,6 +10,7 @@ use azalea::entity::metadata::AbstractLivingUsingItem;
 use azalea::interact::BlockStatePredictionHandler;
 use azalea::local_player::LocalGameMode;
 use azalea::mining::{MiningQueued, StopMiningBlockEvent};
+use azalea::movement::LastSentInput;
 use azalea::protocol::packets::game::s_interact::InteractionHand;
 use azalea::protocol::packets::game::s_player_action::{Action, ServerboundPlayerAction};
 use azalea::protocol::packets::game::{ServerboundUseItem, ServerboundUseItemOn};
@@ -33,7 +34,8 @@ const USE_DELAY_TICKS: u32 = 4;
 /// What a survival client waits after a click that hit nothing before the next one swings.
 const MISS_TICKS: u32 = 10;
 
-/// How long a block the button was let go of can still be on its way to starting to break.
+/// How long a block the button was let go of can still be on its way to starting to break, and the
+/// most a released key is waited on to reach the server.
 const SETTLE_TICKS: u32 = 3;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -189,6 +191,9 @@ pub const PRESS_INPUT: Tool = Tool {
                         keys.tick();
                         phase = match phase {
                             Phase::Waiting => Phase::Waiting,
+                            /* A tick counts once the server has been told, however long azalea takes to tell it. */
+                            Phase::Down(left) if !keys.arrived() => Phase::Down(left),
+                            Phase::Up(left) if !keys.arrived() => Phase::Up(left),
                             Phase::Down(left) if left > 1 => Phase::Down(left - 1),
                             Phase::Down(_) => {
                                 keys.release();
@@ -224,12 +229,17 @@ pub const PRESS_INPUT: Tool = Tool {
                 }
             }
 
-            /* A break that was on its way when the button came up is caught on the ticks after. */
-            if key == Key::Attack {
-                for _ in 0..SETTLE_TICKS {
-                    tick(&bot).await;
-                    keys.tick();
+            /*
+            A break that was on its way when the button came up is caught on the ticks after, and a
+            key let go of is told to the server before the answer, so a press in the next call is a
+            press of its own and not lost in the same input.
+            */
+            for _ in 0..SETTLE_TICKS {
+                if key != Key::Attack && keys.arrived() {
+                    break;
                 }
+                tick(&bot).await;
+                keys.tick();
             }
             let selected = alive(&bot, |game| game.client.selected_hotbar_slot())?;
             let mut after_value = after.as_ref().map_or(Value::Null, |after| after.describe(after_matched.as_deref()));
@@ -342,6 +352,26 @@ impl Keys {
                 self.stop_mining();
             }
             _ => {}
+        }
+    }
+
+    /// Whether the input the server was last sent agrees with the key.
+    ///
+    /// azalea sends the movement flags on its own tick and the bot runs on another task, so a key
+    /// held for one tick here can go down and up again between two of azalea's and never reach the
+    /// server: a jump that turns a conversation's page turned nothing. The other keys are packets
+    /// sent the moment they are pressed.
+    fn arrived(&self) -> bool {
+        if !matches!(self.key, Key::Jump | Key::Sneak | Key::Sprint) {
+            return true;
+        }
+        let wanted = self.down || self.before;
+        /* Nothing sent yet is every key up. */
+        let sent = self.client.get_component::<LastSentInput>().map(|sent| sent.0.clone()).unwrap_or_default();
+        match self.key {
+            Key::Jump => sent.jump == self.down,
+            Key::Sneak => sent.shift == wanted,
+            _ => sent.sprint == wanted,
         }
     }
 
