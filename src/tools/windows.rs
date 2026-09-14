@@ -6,6 +6,7 @@ use azalea::interact::SwingArmEvent;
 use azalea::inventory::operations::ClickType;
 use azalea::inventory::{ItemStack, Menu};
 use azalea::protocol::packets::game::ClientboundGamePacket;
+use azalea::protocol::packets::game::s_client_command::{Action, ServerboundClientCommand};
 use azalea::protocol::packets::game::s_container_click::{HashedStack, ServerboundContainerClick};
 use azalea::registry::builtin::{BlockKind, MenuKind};
 use azalea::{BlockPos, Client, FormattedText, Vec3};
@@ -239,6 +240,24 @@ pub const CLOSE_WINDOW: Tool = Tool {
     name: "close-window",
     run: |bot, _args| {
         Box::pin(async move {
+            /*
+            The credits first: they are drawn over whatever was open. Escape on them is a respawn,
+            which is what takes the player out of the End, and they have no title of their own.
+            */
+            let credits = in_world(&bot, |game| {
+                let showing = std::mem::take(&mut game.hud.borrow_mut().credits);
+                if showing {
+                    game.client.write_packet(ServerboundClientCommand { action: Action::PerformRespawn });
+                }
+                showing
+            })?;
+            if credits {
+                return Ok(Answer::data(
+                    "close-window",
+                    json!({"closed": "", "closedComponent": component(&FormattedText::default()), "screen": "end credits"}),
+                ));
+            }
+
             /* Asking to close nothing is a no-op, not a mistake. */
             let Some(window) = in_world(&bot, |game| open(&game.client))? else {
                 return Ok(Answer::data("close-window", json!({"closed": null, "screen": null})));

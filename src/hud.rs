@@ -137,6 +137,9 @@ pub struct Hud {
     /// the client counts them.
     cooldowns: HashMap<String, u64>,
     pub logins: u64,
+    /// The end credits are up. The client shows them for any win-game event, whatever its value,
+    /// and they hold the player outside every world until it asks to respawn.
+    pub credits: bool,
 }
 
 pub enum Slot {
@@ -332,6 +335,7 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
             EventType::StopRaining => hud.rain = 1.0,
             EventType::RainLevelChange => hud.rain = p.param.clamp(0.0, 1.0),
             EventType::ThunderLevelChange => hud.thunder = p.param.clamp(0.0, 1.0),
+            EventType::WinGame => hud.credits = true,
             _ => {}
         },
         P::PlayerInfoUpdate(p) => {
@@ -384,6 +388,7 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
         }
         P::Respawn(p) => {
             /* A new level on the client, which starts dry and with nobody riding anything until the server says otherwise. */
+            hud.credits = false;
             hud.rain = 0.0;
             hud.thunder = 0.0;
             hud.passengers.clear();
