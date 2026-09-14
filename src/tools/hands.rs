@@ -169,6 +169,7 @@ pub const ACTIVATE_BLOCK: Tool = Tool {
 
             let block = alive(&bot, |game| {
                 use_item_on(&game.client, at, Direction::Up, at.center());
+                super::editors::opened_command_block(game, at);
                 name(block_at(game, at))
             })?;
             Ok(Answer::text(format!("Right-clicked {block} at {}.", written(at))))

@@ -3,6 +3,7 @@ mod calls;
 mod catalog;
 mod config;
 mod dialog;
+mod editors;
 mod feeds;
 mod game;
 mod health;

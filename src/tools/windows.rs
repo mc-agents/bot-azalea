@@ -339,6 +339,9 @@ pub const CLOSE_WINDOW: Tool = Tool {
                     json!({"closed": title, "closedComponent": title_component, "screen": "dialog"}),
                 ));
             }
+            if let Some((title, screen)) = in_world(&bot, super::editors::close)? {
+                return Ok(Answer::data("close-window", json!({"closed": title, "closedComponent": title, "screen": screen})));
+            }
 
             /* Asking to close nothing is a no-op, not a mistake. */
             let Some(window) = in_world(&bot, |game| menu(&game.client))? else {

@@ -26,7 +26,7 @@ pub enum Held {
 }
 
 pub enum Kind {
-    Text,
+    Text { max_length: usize, multiline: bool },
     Checkbox { on_true: String, on_false: String },
     Choice { entries: Vec<Entry> },
     Slider(Range),
@@ -72,7 +72,7 @@ impl Open {
         let mut open = Open { definition, held: HashMap::new() };
         for input in open.inputs() {
             let start = match &input.kind {
-                Kind::Text => Held::Text(open.field(&input.key, "initial").and_then(Value::as_str).unwrap_or_default().to_owned()),
+                Kind::Text { .. } => Held::Text(open.field(&input.key, "initial").and_then(Value::as_str).unwrap_or_default().to_owned()),
                 Kind::Checkbox { .. } => Held::Checkbox(truthy(open.field(&input.key, "initial"))),
                 Kind::Choice { entries } => {
                     let chosen = open.options(&input.key).find(|(_, initial)| *initial).map(|(entry, _)| entry.id);
@@ -118,7 +118,10 @@ impl Open {
                 let key = input.get("key").and_then(Value::as_str).unwrap_or_default().to_owned();
                 let label = input.get("label").cloned().unwrap_or(Value::Null);
                 let kind = match kind(input) {
-                    "text" => Kind::Text,
+                    "text" => Kind::Text {
+                        max_length: input.get("max_length").and_then(Value::as_u64).unwrap_or(32) as usize,
+                        multiline: input.get("multiline").is_some(),
+                    },
                     "boolean" => Kind::Checkbox {
                         on_true: input.get("on_true").and_then(Value::as_str).unwrap_or("true").to_owned(),
                         on_false: input.get("on_false").and_then(Value::as_str).unwrap_or("false").to_owned(),

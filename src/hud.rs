@@ -21,12 +21,16 @@ use azalea::protocol::packets::game::c_set_display_objective::DisplaySlot;
 use azalea::protocol::packets::game::c_set_objective::Method;
 use azalea::registry::data::DimensionKind;
 use azalea::registry::{DataRegistry, Holder};
-use azalea::{FormattedText, Identifier};
+use azalea::block::BlockTrait;
+use azalea::core::entity_id::MinecraftEntityId;
+use azalea::registry::builtin::{BlockEntityKind, BlockKind};
+use azalea::{BlockPos, FormattedText, Identifier};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::bot::Bot;
 use crate::dialog::Open;
+use crate::editors::{BlockEntities, CommandEditor, SignEditor, Tracked, sign_face};
 use crate::feeds;
 
 /// Where the packets the bot keeps go, one per connection.
@@ -76,6 +80,13 @@ fn kept(packet: &ClientboundGamePacket) -> bool {
             | P::ClearDialog(_)
             /* The command tree, which says whether the client would run a command a dialog asks for. */
             | P::Commands(_)
+            /* Block entities, which a sign's text and a command block's command are only in, and the editor for a sign. */
+            | P::LevelChunkWithLight(_)
+            | P::ForgetLevelChunk(_)
+            | P::BlockEntityData(_)
+            | P::OpenSignEditor(_)
+            /* Not the HUD: the one that says the player is an operator, which azalea reads and drops. */
+            | P::EntityEvent(_)
             | P::PlayerInfoUpdate(_)
             | P::PlayerInfoRemove(_)
             | P::CommandSuggestions(_)
@@ -150,6 +161,16 @@ pub struct Hud {
     /// read, because keys still go to it and not to the game.
     pub dialog: Option<Open>,
     pub commands: Option<ClientboundCommands>,
+    pub block_entities: BlockEntities,
+    /// The sign editor and the command block editor, while one is open.
+    pub sign_editor: Option<SignEditor>,
+    pub command_editor: Option<CommandEditor>,
+    /// The operator level the server last gave the player, from 0 to 4. azalea keeps a component
+    /// for it and never sets it, so it reads 0 for an operator too.
+    pub permission_level: u8,
+    /// The player's own entity id, from the login. The operator level arrives straight after it,
+    /// before azalea has given the player the component that would say the same.
+    player_id: Option<MinecraftEntityId>,
 }
 
 pub enum Slot {
@@ -239,6 +260,65 @@ pub fn apply(bot: &Bot, packet: &ClientboundGamePacket) {
                 game.hud.borrow_mut().dialog = None;
             }
             feeds::dialog_closed(bot);
+        }
+        P::LevelChunkWithLight(p) => {
+            let game = bot.game.borrow();
+            let Some(game) = game.as_ref() else { return };
+            let client = &game.client;
+            let mut hud = game.hud.borrow_mut();
+            hud.block_entities.forget_chunk(p.x, p.z);
+            for entity in &p.chunk_data.block_entities {
+                let at = BlockPos::new(
+                    p.x * 16 + i32::from(entity.packed_xz >> 4),
+                    i32::from(entity.y as i16),
+                    p.z * 16 + i32::from(entity.packed_xz & 15),
+                );
+                hud.block_entities.keep(at, tracked(client, at, entity.kind, &entity.data));
+            }
+        }
+        P::ForgetLevelChunk(p) => {
+            if let Some(game) = bot.game.borrow().as_ref() {
+                game.hud.borrow_mut().block_entities.forget_chunk(p.pos.x, p.pos.z);
+            }
+        }
+        P::BlockEntityData(p) => {
+            let game = bot.game.borrow();
+            let Some(game) = game.as_ref() else { return };
+            let client = &game.client;
+            let mut hud = game.hud.borrow_mut();
+            let kept = tracked(client, p.pos, p.block_entity_type, &p.tag);
+            /* The editor that opened before the block's command arrived is filled in now, as the client fills it. */
+            if let Some(editor) = hud.command_editor.as_mut().filter(|editor| editor.at == p.pos) {
+                let state = client.world().read().get_block_state(p.pos).unwrap_or_default();
+                let conditional = Box::<dyn BlockTrait>::from(state).get_property("conditional") == Some("true");
+                editor.load(&kept.data, kept.block.as_deref().unwrap_or_default(), conditional);
+            }
+            hud.block_entities.keep(p.pos, kept);
+        }
+        P::EntityEvent(p) => {
+            /* Events 24 to 28 set the operator level, 0 to 4, and only ever for the player's own entity. */
+            if let 24..=28 = p.event_id
+                && let Some(game) = bot.game.borrow().as_ref()
+            {
+                let mut hud = game.hud.borrow_mut();
+                if hud.player_id == Some(p.entity_id) {
+                    hud.permission_level = p.event_id - 24;
+                }
+            }
+        }
+        P::OpenSignEditor(p) => {
+            let game = bot.game.borrow();
+            let Some(game) = game.as_ref() else { return };
+            let client = &game.client;
+            let mut hud = game.hud.borrow_mut();
+            let block = block_name(client, p.pos);
+            let face = if p.is_front_text { "front_text" } else { "back_text" };
+            let lines = hud.block_entities.at(p.pos, &block).map(|sign| sign_face(&sign.data, face).0).unwrap_or_default();
+            let mut kept = [String::new(), String::new(), String::new(), String::new()];
+            for (line, text) in kept.iter_mut().zip(lines) {
+                *line = text;
+            }
+            hud.sign_editor = Some(SignEditor { at: p.pos, front: p.is_front_text, hanging: block.ends_with("hanging_sign"), lines: kept });
         }
         P::Sound(p) => feeds::sound(bot, match &p.sound {
             Holder::Reference(sound) => sound.to_str().to_owned(),
@@ -421,12 +501,15 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
             through a proxy would otherwise show the last backend's sidebar on the next one.
             */
             let logins = hud.logins + 1;
-            *hud = Hud { logins, ..Hud::default() };
+            *hud = Hud { logins, player_id: Some(p.player_id), ..Hud::default() };
             hud.dimension = Some((p.common.dimension_type, p.common.dimension.clone()));
         }
         P::Respawn(p) => {
             /* A new level on the client, which starts dry and with nobody riding anything until the server says otherwise. */
             hud.credits = false;
+            hud.block_entities.clear();
+            hud.sign_editor = None;
+            hud.command_editor = None;
             hud.rain = 0.0;
             hud.thunder = 0.0;
             hud.passengers.clear();
@@ -436,6 +519,15 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
         }
         _ => {}
     }
+}
+
+fn tracked(client: &azalea::Client, at: BlockPos, kind: BlockEntityKind, data: &simdnbt::owned::Nbt) -> Tracked {
+    let block = client.world().read().get_block_state(at).map(|state| BlockKind::from(state).to_str().to_owned());
+    Tracked { kind: kind.to_str().to_owned(), block, data: serde_json::to_value(data).unwrap_or_default() }
+}
+
+pub fn block_name(client: &azalea::Client, at: BlockPos) -> String {
+    client.world().read().get_block_state(at).map(|state| BlockKind::from(state).to_str().to_owned()).unwrap_or_default()
 }
 
 /// The dialog a packet means, as JSON.

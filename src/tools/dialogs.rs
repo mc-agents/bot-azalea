@@ -25,7 +25,8 @@ pub const PRESS_DIALOG_BUTTON: Tool = Tool {
             in_world(&bot, |game| {
                 let mut hud = game.hud.borrow_mut();
                 let Some(open) = hud.dialog.as_ref() else {
-                    return Err(Failure::refused("NO_SCREEN", "no screen is open"));
+                    drop(hud);
+                    return super::editors::press(game, &label);
                 };
                 let buttons = open.buttons();
                 let button = pick(&buttons, &label).ok_or_else(|| {
@@ -142,7 +143,7 @@ pub const SET_DIALOG_INPUT: Tool = Tool {
                         let now = range.scaled(range.to_slider(asked));
                         ("number_range", Held::Slider(now), Value::Null, if now == asked { Value::Null } else { json!(asked) })
                     }
-                    Kind::Text => {
+                    Kind::Text { .. } => {
                         return Err(Failure::refused("TEXT_INPUT", format!("\"{key}\" is a text field; type into it with type-text")));
                     }
                     Kind::Unknown => {
@@ -299,14 +300,20 @@ fn walk(tree: &ClientboundCommands, at: usize, tokens: &[&str], signed: bool, re
 }
 
 fn pick<'a>(buttons: &'a [Button], label: &str) -> Option<&'a Button> {
-    let lowered = label.to_lowercase();
-    buttons
-        .iter()
-        .find(|button| button.label.to_lowercase() == lowered)
-        .or_else(|| buttons.iter().find(|button| button.label.to_lowercase().contains(&lowered)))
+    pick_by(buttons, label, |button| &button.label)
 }
 
-fn offered<'a>(labels: impl Iterator<Item = &'a str>) -> String {
+/// By the label a player reads: all of it first, any part of it after, both ignoring case.
+pub fn pick_by<'a, T>(items: &'a [T], label: &str, shown: impl Fn(&T) -> &str) -> Option<&'a T> {
+    let lowered = label.to_lowercase();
+    items
+        .iter()
+        .find(|item| shown(item).to_lowercase() == lowered)
+        .or_else(|| items.iter().find(|item| shown(item).to_lowercase().contains(&lowered)))
+}
+
+
+pub fn offered<'a>(labels: impl Iterator<Item = &'a str>) -> String {
     let quoted: Vec<String> = labels.map(|label| format!("\"{label}\"")).collect();
     if quoted.is_empty() { "none".to_owned() } else { quoted.join(", ") }
 }

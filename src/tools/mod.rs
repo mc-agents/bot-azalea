@@ -6,6 +6,7 @@ mod book;
 mod chat;
 mod command;
 mod dialogs;
+mod editors;
 mod entities;
 mod hands;
 mod hud;
@@ -97,6 +98,8 @@ const TOOLS: &[Tool] = &[
     input::PRESS_INPUT,
     dialogs::PRESS_DIALOG_BUTTON,
     dialogs::SET_DIALOG_INPUT,
+    editors::TYPE_TEXT,
+    editors::READ_BLOCK_ENTITY,
 ];
 
 pub fn find(name: &str) -> Option<&'static Tool> {
