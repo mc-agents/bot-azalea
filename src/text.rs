@@ -13,6 +13,8 @@ pub fn component(component: &FormattedText) -> Value {
 /// A server draws a HUD by stacking a bar glyph, a spacer and a label. The glyphs are private use
 /// area codepoints that mean nothing as text, and a spacer with them removed holds whitespace and
 /// nothing else: a position on the screen rather than something to read, so it is not a segment.
+/// A piece that was only ever a space is text, though: a chat line built as "Cleared 0", a space and
+/// "[Track]" read "Cleared 0[Track]" while the screen showed the gap.
 ///
 /// What is left is not trimmed. "Mana " and "Mana" are different pieces, and a server that writes
 /// a label and a number as two components puts the space in one of them.
@@ -32,7 +34,8 @@ pub fn segments(component: &FormattedText) -> Value {
         },
         |text| {
             let readable: String = text.chars().filter(|c| !glyph(*c)).collect();
-            if !blank(&readable) {
+            let spacer = blank(&readable) && readable.chars().count() != text.chars().count();
+            if !readable.is_empty() && !spacer {
                 let (font, color) = style.borrow().clone();
                 let mut segment = json!({"text": readable});
                 if let Some(font) = font {
