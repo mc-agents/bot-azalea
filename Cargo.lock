@@ -807,7 +807,7 @@ dependencies = [
 
 [[package]]
 name = "bot-azalea"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "azalea",
  "bevy_ecs",
