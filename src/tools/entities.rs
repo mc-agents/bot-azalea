@@ -379,6 +379,12 @@ fn crosshair(client: &Client) -> Option<(Seen, Vec3)> {
         .map(|(_, seen, at)| (seen, at))
 }
 
+/// The entity under the crosshair and where the ray met it, for a key press that clicks whatever
+/// is there.
+pub(super) fn aimed(client: &Client) -> Option<(Entity, Vec3)> {
+    crosshair(client).map(|(seen, at)| (seen.entity, at))
+}
+
 /// A tick before reading the crosshair. azalea applies a turn on its next update rather than when it
 /// is asked for, so a look-at answered just before this call has not moved the crosshair yet, and
 /// the click went to where the bot had been looking.

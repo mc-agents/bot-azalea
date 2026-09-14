@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::args::{integer, text};
-use super::entities::{attack, interact};
+use super::entities::{aimed, attack, interact};
 use super::windows::swing;
 use super::{Tool, alive, tick};
 use crate::calls::{Answer, Failure};
@@ -411,6 +411,11 @@ impl Keys {
     /// is taken to be placed when a block goes by its name.
     fn use_item(&self) {
         let client = &self.client;
+        /* The entity pick first: azalea's own misses the interaction hitbox a model is clicked through. */
+        if let Some((entity, at)) = aimed(client) {
+            let _ = interact(client, entity, Some(at));
+            return;
+        }
         match client.hit_result() {
             HitResult::Entity(hit) => {
                 let _ = interact(client, hit.entity, None);
@@ -446,8 +451,14 @@ impl Keys {
     /// sends, moves on to the next block and stops on a miss, for as long as it stays on.
     fn attack(&mut self) {
         let client = &self.client;
-        client.left_click_mine(true);
+        /* A hitbox azalea's pick passes through is hit, not the block behind it mined. */
+        let hitbox = aimed(client);
+        client.left_click_mine(hitbox.is_none());
         if self.miss_ticks > 0 {
+            return;
+        }
+        if let Some((entity, _)) = hitbox {
+            let _ = attack(client, entity, None);
             return;
         }
         match client.hit_result() {
