@@ -59,13 +59,22 @@ docker run --rm -e MCP_SERVER_HOST=host.docker.internal -e BOT_NAME=a1 bot-azale
   the decode of the whole packet, so the chat line it was in never reached the bot and all that was
   left was a log line. Those now stand in as text naming what could not be resolved. The rest of
   the crate is as released.
+- **The attack packet is written by the bot.** azalea writes the target's id as a four-byte int
+  where the game reads a VarInt, and the server drops the connection of a bot that swings. So is
+  the interact packet: azalea sends the click as a position in the world, where the game sends it
+  relative to the entity, and sends it twice.
+- **A window is read after the server answers the click.** azalea predicts a click before sending
+  it, and a number-key swap or a drag comes out differently from the game's. Every click goes with
+  a state id the server never holds, which makes it answer with the whole window, and the tool reads
+  that. The state id and cursor azalea drops from those answers are put back by the bot.
 - **No automatic respawn or reconnect.** A server under test may be checking what happens on death
   or on a kick, and a bot that got up or rejoined by itself would hide exactly that.
 
 ## Known limits
 
-- **Components arrive as azalea parsed them.** Hover events are dropped, and a translate key is
-  resolved by nothing, since there is no language table. Fonts and colours survive.
+- **Components arrive as azalea parsed them.** Hover events are dropped. A translate key is
+  resolved with the en_us table azalea ships, so "Golden Apple" reads as it does in a default
+  client; a key only a resource pack defines stays a key. Fonts and colours survive.
 - **Much of what a server sends is decoded and not kept by azalea.** The action bar, titles, dialogs,
   boss bars, the scoreboard and the clock are tracked here (`src/hud.rs`); advancements and block
   entities are not yet, and nothing reads them.

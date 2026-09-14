@@ -1,16 +1,23 @@
+mod approach;
 mod args;
 mod blocks;
 mod chat;
 mod command;
+mod entities;
 mod hud;
+mod inventory;
 mod player;
 mod position;
+mod stacks;
+mod text;
 mod wait;
+mod windows;
 mod world;
 
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -20,6 +27,7 @@ use crate::catalog;
 use crate::game::Game;
 
 pub use player::game_mode;
+pub use windows::received;
 
 pub type Run = fn(Rc<Bot>, Value) -> Pin<Box<dyn Future<Output = Outcome>>>;
 
@@ -42,6 +50,20 @@ const TOOLS: &[Tool] = &[
     hud::READ_PLAYER_LIST,
     world::GET_WORLD_STATE,
     wait::WAIT_TICKS,
+    entities::FIND_ENTITY,
+    entities::ATTACK_ENTITY,
+    entities::INTERACT_ENTITY,
+    inventory::LIST_INVENTORY,
+    inventory::FIND_ITEM,
+    inventory::EQUIP_ITEM,
+    inventory::GIVE_ITEM,
+    windows::OPEN_CONTAINER,
+    windows::READ_WINDOW,
+    windows::CLOSE_WINDOW,
+    windows::WAIT_FOR_WINDOW,
+    windows::CLICK_SLOT,
+    windows::DRAG_SLOTS,
+    windows::DROP_HELD_ITEM,
 ];
 
 pub fn find(name: &str) -> Option<&'static Tool> {
@@ -63,4 +85,27 @@ pub fn in_world<T>(bot: &Bot, read: impl FnOnce(&Game) -> T) -> Result<T, Failur
         Some(game) => Ok(read(game)),
         None => Err(Failure::not_in_game()),
     }
+}
+
+/// The world, for a tool that acts in it. A dead player is still a player to the client, and a tool
+/// that went on acting for one sent the server nothing and waited out its deadline.
+pub fn alive<T>(bot: &Bot, act: impl FnOnce(&Game) -> T) -> Result<T, Failure> {
+    in_world(bot, |game| {
+        if game.client.get_component::<azalea::entity::Dead>().is_some() {
+            Err(Failure::dead(game.cause_of_death()))
+        } else {
+            Ok(act(game))
+        }
+    })?
+}
+
+/// The next tick the client runs, or a second of nothing.
+///
+/// A connection that ends stops the ticks, and a wait with no end of its own would sit until the
+/// call's deadline and answer with a timeout instead of saying the bot left. The caller asks again
+/// whether it is in a world after every one of these.
+pub async fn tick(bot: &Bot) {
+    let mut ticks = bot.ticks.subscribe();
+    ticks.borrow_and_update();
+    let _ = tokio::time::timeout(Duration::from_secs(1), ticks.changed()).await;
 }

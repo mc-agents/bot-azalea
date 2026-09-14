@@ -78,6 +78,10 @@ fn kept(packet: &ClientboundGamePacket) -> bool {
             | P::Login(_)
             | P::Respawn(_)
             | P::StartConfiguration(_)
+            /* Not the HUD: what azalea drops from a window's contents, which tools::received puts back. */
+            | P::OpenScreen(_)
+            | P::ContainerSetContent(_)
+            | P::SetCursorItem(_)
     )
 }
 

@@ -44,8 +44,11 @@ pub struct Game {
 }
 
 impl Game {
+    /// Spawned, and still holding the world. A connection that ends strips the player of its world
+    /// before the disconnect reaches the pump, and anything that read it in between -- the status
+    /// the disconnect itself sends -- panicked on a position that was no longer there.
     pub fn spawned(&self) -> bool {
-        self.spawned.get()
+        self.spawned.get() && self.client.get_component::<azalea::InGameState>().is_some()
     }
 
     /// What killed the bot, while it is dead: the message the server sent with the death.
@@ -227,6 +230,9 @@ async fn pump(
                 None => break,
             },
             Some(packet) = packets.recv() => {
+                if let Some(game) = bot.game.borrow().as_ref().filter(|game| game.generation == generation) {
+                    crate::tools::received(&bot, &game.client, &packet);
+                }
                 if mine(&bot) {
                     hud::apply(&bot, &packet);
                 }

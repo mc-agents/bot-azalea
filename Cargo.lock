@@ -813,7 +813,9 @@ version = "0.3.0"
 dependencies = [
  "azalea",
  "bevy_ecs",
+ "indexmap",
  "parking_lot",
+ "regex",
  "serde_json",
  "simdnbt",
  "tokio",

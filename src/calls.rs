@@ -51,6 +51,17 @@ impl Failure {
         }
     }
 
+    /// Not retryable: asking again changes nothing, and the one thing that does is respawn.
+    pub fn dead(cause: Option<String>) -> Failure {
+        let why = cause.map(|cause| format!(" ({cause})")).unwrap_or_default();
+        Failure {
+            class: "tool",
+            code: "DEAD".into(),
+            message: format!("the bot is dead{why}. Call respawn to bring it back."),
+            retryable: false,
+        }
+    }
+
     pub fn unsupported(tool: &str) -> Failure {
         Failure {
             class: "unsupported",

@@ -30,6 +30,10 @@ pub struct Bot {
     /// Every chat line as text, for a call waiting on the one thing a proxy only says in chat.
     pub heard: broadcast::Sender<String>,
     pub ticks: watch::Sender<u64>,
+    /// The window the server last sent the whole of, or `None` once a new one has opened and its
+    /// contents have not arrived. Sent on every arrival, equal or not, because an arrival is what a
+    /// click waits for.
+    pub contents: watch::Sender<Option<i32>>,
 }
 
 impl Bot {
@@ -45,6 +49,7 @@ impl Bot {
             runs: RefCell::new(Runs::new()),
             heard: broadcast::channel(64).0,
             ticks: watch::channel(0).0,
+            contents: watch::channel(None).0,
         }
     }
 

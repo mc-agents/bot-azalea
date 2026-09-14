@@ -11,8 +11,11 @@ publish = false
 azalea = { version = "=0.16.0", default-features = false, features = ["log", "serde", "online-mode"] }
 # azalea's ECS, named because its derive macros refer to it by crate name. The version follows azalea's.
 bevy_ecs = "0.18"
+# The map azalea's container click packet is declared with, named here only to build one.
+indexmap = "2"
 # The lock azalea keeps its ECS behind. Named here only to hold it, so the version follows azalea's.
 parking_lot = "0.12"
+regex = "1"
 # The NBT a dialog arrives in, named for its serde feature so it can go on the wire as JSON.
 simdnbt = { version = "0.10", features = ["serde"] }
 serde_json = "1"
