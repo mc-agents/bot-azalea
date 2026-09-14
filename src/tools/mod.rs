@@ -7,6 +7,7 @@ mod command;
 mod entities;
 mod hands;
 mod hud;
+mod input;
 mod inventory;
 mod player;
 mod position;
@@ -77,6 +78,7 @@ const TOOLS: &[Tool] = &[
     hands::PLACE_BLOCK,
     hands::ACTIVATE_BLOCK,
     hands::USE_HELD_ITEM,
+    input::PRESS_INPUT,
 ];
 
 pub fn find(name: &str) -> Option<&'static Tool> {

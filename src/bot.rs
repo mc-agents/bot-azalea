@@ -29,6 +29,9 @@ pub struct Bot {
     pub runs: RefCell<Runs>,
     /// Every chat line as text, for a call waiting on the one thing a proxy only says in chat.
     pub heard: broadcast::Sender<String>,
+    /// The action bar, the titles and the sounds as the text a pattern is matched against, by feed,
+    /// for a press that has to land on the tick a line arrives rather than a round trip later.
+    pub shown: broadcast::Sender<(&'static str, String)>,
     pub ticks: watch::Sender<u64>,
     /// The window the server last sent the whole of, or `None` once a new one has opened and its
     /// contents have not arrived. Sent on every arrival, equal or not, because an arrival is what a
@@ -48,6 +51,7 @@ impl Bot {
             seq: Cell::new(0),
             runs: RefCell::new(Runs::new()),
             heard: broadcast::channel(64).0,
+            shown: broadcast::channel(256).0,
             ticks: watch::channel(0).0,
             contents: watch::channel(None).0,
         }

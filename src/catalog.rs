@@ -42,6 +42,7 @@ pub const ARGS_HASHES: &[(&str, &str)] = &[
     ("place-block", "sha256:1d8ac28736965a5135225168273bdababada6360c320eed181f50e766f6d5797"),
     ("press-container-button", "sha256:d7d1b6d413cf434807e2697461b939f43f9e1a268472d271c3b75ef988d6ae11"),
     ("press-dialog-button", "sha256:1010547a2695089153ad40d50abaa241830dddac1a875129be6cb7b41961789a"),
+    ("press-input", "sha256:ea757831c961f520be874a32ce99049baf387d71eca9e1b17f64dc9c430c9210"),
     ("read-advancements", "sha256:a13a1bc55bd4bef96319e778f70a981fbbd4ef5e7d268be0bcb787a4d55f8483"),
     ("read-block-entity", "sha256:745bc34ffa94b53097b81ff9cabd6d41db733664935cd5c7d7a9a090cc329c65"),
     ("read-book", "sha256:d746974fa9afd5e951f76f9af38954b0ad7f436f2120dc974da65e5ee39f856f"),

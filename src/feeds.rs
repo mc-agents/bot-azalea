@@ -75,6 +75,12 @@ pub fn dialog(bot: &Bot, dialog: Value) {
     fold(bot, Line { kind: "dialog", source: "dialog", text: title, segments: None, component, data: Some(dialog) });
 }
 
+/// A sound played to the bot. There is no effect feed on this kind of bot, so it goes only to a
+/// press waiting on one.
+pub fn sound(bot: &Bot, id: String) {
+    let _ = bot.shown.send(("effect", id));
+}
+
 pub fn dialog_closed(bot: &Bot) {
     let said = "the dialog was closed";
     fold(bot, Line { kind: "dialog", source: "closed", text: said.into(), segments: None, component: json!(said), data: None });
@@ -83,6 +89,7 @@ pub fn dialog_closed(bot: &Bot) {
 /// Only the feeds a server draws with stacked glyphs carry segments. Chat is prose, and splitting
 /// it at every style change turns one sentence into a dozen fragments.
 fn drawn(bot: &Bot, kind: &'static str, source: &str, message: &FormattedText) {
+    let _ = bot.shown.send((kind, text::readable(message)));
     fold(bot, Line {
         kind,
         source,

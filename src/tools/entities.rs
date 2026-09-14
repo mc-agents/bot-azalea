@@ -288,7 +288,7 @@ pub const INTERACT_ENTITY: Tool = Tool {
 ///
 /// Upstream: `ServerboundAttack::entity_id` in azalea-protocol 0.16.0 (`s_attack.rs`) lacks the
 /// `#[var]` its `ServerboundInteract` has. Once azalea marks it, `Client::attack` does this.
-fn attack(client: &Client, entity: Entity, eyes: Vec3) -> Result<(), Failure> {
+pub(super) fn attack(client: &Client, entity: Entity, eyes: Vec3) -> Result<(), Failure> {
     let target = *client
         .get_entity_component::<MinecraftEntityId>(entity)
         .ok_or_else(|| Failure::refused("NO_SUCH_ENTITY", "the entity left the world before it was hit."))?;
@@ -314,7 +314,7 @@ fn attack(client: &Client, entity: Entity, eyes: Vec3) -> Result<(), Failure> {
 ///
 /// Upstream: `handle_entity_interact` in azalea-client 0.16.0 (`plugins/interact/mod.rs`). Once it
 /// subtracts the entity's position and sends once, `Client::entity_interact` does this.
-fn interact(client: &Client, entity: Entity) -> Result<(), Failure> {
+pub(super) fn interact(client: &Client, entity: Entity) -> Result<(), Failure> {
     let lost = || Failure::refused("NO_SUCH_ENTITY", "the entity left the world before it was clicked.");
     let (_, eyes) = whereabouts(client, entity).ok_or_else(lost)?;
     let id = *client.get_entity_component::<MinecraftEntityId>(entity).ok_or_else(lost)?;

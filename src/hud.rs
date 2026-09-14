@@ -81,6 +81,8 @@ fn kept(packet: &ClientboundGamePacket) -> bool {
             | P::Respawn(_)
             | P::StartConfiguration(_)
             /* Not the HUD: what azalea drops from a window's contents, which tools::received puts back. */
+            /* Not the HUD either: a sound, which a press may be waiting on. */
+            | P::Sound(_)
             | P::OpenScreen(_)
             | P::ContainerSetContent(_)
             | P::SetCursorItem(_)
@@ -229,6 +231,10 @@ pub fn apply(bot: &Bot, packet: &ClientboundGamePacket) {
             }
         }
         P::ClearDialog(_) => feeds::dialog_closed(bot),
+        P::Sound(p) => feeds::sound(bot, match &p.sound {
+            Holder::Reference(sound) => sound.to_str().to_owned(),
+            Holder::Direct(custom) => custom.sound_id.to_string(),
+        }),
         _ => {
             let game = bot.game.borrow();
             let Some(game) = game.as_ref() else { return };

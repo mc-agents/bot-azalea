@@ -52,6 +52,13 @@ pub fn segments(component: &FormattedText) -> Value {
     Value::Array(pieces.into_inner())
 }
 
+/// The text as it reads with the glyphs taken out and nothing between the pieces: what a pattern
+/// written against a feed line is matched with inside the bot, where the font labels mcp-server puts
+/// in front of each piece do not exist.
+pub fn readable(component: &FormattedText) -> String {
+    component.to_string().chars().filter(|c| !glyph(*c)).collect()
+}
+
 /// The font by its full name, and none for the default one, which is what names no label.
 fn font(font: Option<&str>) -> Option<String> {
     let font = font?;
