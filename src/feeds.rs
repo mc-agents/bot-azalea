@@ -7,9 +7,6 @@ use serde_json::{Value, json};
 use crate::bot::{Bot, now_millis};
 use crate::text;
 
-/// How often a run that stays open goes on the wire again.
-const FLUSH_MS: u64 = 1_000;
-
 /// A run nothing has repeated for this many flushes has stopped showing, whatever the server meant.
 const STALE_FLUSHES: u64 = 3;
 
@@ -150,7 +147,7 @@ fn fold(bot: &Bot, line: Line) {
         {
             run.repeats += 1;
             run.ts = now;
-            if now - run.sent_at >= FLUSH_MS {
+            if now - run.sent_at >= bot.repeat_flush_ms() {
                 run.sent_at = now;
                 frames.push(frame(run, false));
             }
@@ -181,17 +178,19 @@ fn fold(bot: &Bot, line: Line) {
     }
 }
 
-/// Re-send the runs that are due, and close the ones nothing has repeated in a while.
+/// Re-send the runs that are due, and close the ones nothing has repeated in a while. The cadence
+/// is the server's, from its handshake.
 pub fn flush(bot: &Bot) {
     let now = now_millis();
+    let every = bot.repeat_flush_ms();
     let mut frames = Vec::new();
 
     bot.runs.borrow_mut().retain(|_, run| {
-        if now - run.ts >= FLUSH_MS * STALE_FLUSHES {
+        if now - run.ts >= every * STALE_FLUSHES {
             frames.push(frame(run, true));
             return false;
         }
-        if now - run.sent_at >= FLUSH_MS {
+        if now - run.sent_at >= every {
             run.sent_at = now;
             frames.push(frame(run, false));
         }

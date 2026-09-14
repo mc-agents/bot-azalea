@@ -24,6 +24,8 @@ pub struct Bot {
     pub calls: RefCell<HashMap<String, Option<oneshot::Sender<String>>>>,
     pub game: RefCell<Option<Game>>,
     feeds: RefCell<Map<String, Value>>,
+    /// How often a folded run goes on the wire again, as the server's handshake set it.
+    repeat_flush_ms: Cell<u64>,
     seq: Cell<u64>,
     /// The folded feeds' open runs, which outlive a connection only long enough to be closed.
     pub runs: RefCell<Runs>,
@@ -48,6 +50,7 @@ impl Bot {
             calls: RefCell::new(HashMap::new()),
             game: RefCell::new(None),
             feeds: RefCell::new(Map::new()),
+            repeat_flush_ms: Cell::new(1_000),
             seq: Cell::new(0),
             runs: RefCell::new(Runs::new()),
             heard: broadcast::channel(64).0,
@@ -69,8 +72,11 @@ impl Bot {
         self.calls.borrow_mut().clear();
     }
 
-    pub fn accepted(&self, feeds: Map<String, Value>) {
+    pub fn accepted(&self, feeds: Map<String, Value>, repeat_flush_ms: Option<u64>) {
         *self.feeds.borrow_mut() = feeds;
+        if let Some(every) = repeat_flush_ms.filter(|every| *every > 0) {
+            self.repeat_flush_ms.set(every);
+        }
         self.linked.set(true);
     }
 
@@ -84,6 +90,10 @@ impl Bot {
         if let Some(outbox) = self.outbox.borrow().as_ref() {
             let _ = outbox.send(frame::json(message));
         }
+    }
+
+    pub fn repeat_flush_ms(&self) -> u64 {
+        self.repeat_flush_ms.get()
     }
 
     pub fn wants(&self, feed: &str) -> bool {

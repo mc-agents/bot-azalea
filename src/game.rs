@@ -226,7 +226,6 @@ async fn pump(
     let mut joined = Some(joined);
     let mut logged_in = false;
     let mine = |bot: &Bot| bot.game.borrow().as_ref().is_some_and(|game| game.generation == generation);
-    let mut flush = tokio::time::interval(Duration::from_secs(1));
 
     loop {
         let event = tokio::select! {
@@ -243,10 +242,6 @@ async fn pump(
                 }
                 continue;
             }
-            _ = flush.tick() => {
-                feeds::flush(&bot);
-                continue;
-            }
         };
         match event {
             Event::Login => logged_in = true,
@@ -258,7 +253,15 @@ async fn pump(
                     let _ = joined.send(Ok(()));
                 }
             }
-            Event::Tick => bot.ticks.send_modify(|ticks| *ticks += 1),
+            Event::Tick => {
+                bot.ticks.send_modify(|ticks| *ticks += 1);
+                /*
+                On the tick rather than on a timer of its own: the server sets the cadence, which
+                a one-second timer could not keep below a second, and the task is awake for the
+                tick already.
+                */
+                feeds::flush(&bot);
+            }
             Event::Death(kill) => {
                 if let Some(game) = bot.game.borrow().as_ref().filter(|game| game.generation == generation) {
                     *game.cause_of_death.borrow_mut() = kill.map(|kill| kill.message.to_string());

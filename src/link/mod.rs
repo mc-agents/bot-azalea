@@ -94,7 +94,7 @@ fn handle(bot: &Rc<Bot>, message: Value) {
         "helloOk" => {
             let feeds = message["events"].as_object().cloned().unwrap_or_else(Map::new);
             info!("linked as session {}", message["sessionId"].as_str().unwrap_or("?"));
-            bot.accepted(feeds);
+            bot.accepted(feeds, message["repeatFlushMs"].as_u64());
             /* "idle" is the protocol's word for linked and in no world. */
             bot.status("idle", None);
         }
