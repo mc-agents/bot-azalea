@@ -351,7 +351,7 @@ impl Keys {
         let client = &self.client;
         match client.hit_result() {
             HitResult::Entity(hit) => {
-                let _ = interact(client, hit.entity);
+                let _ = interact(client, hit.entity, None);
             }
             HitResult::Block(hit) => {
                 if !hit.miss {
@@ -377,7 +377,7 @@ impl Keys {
         let client = &self.client;
         match client.hit_result() {
             HitResult::Entity(hit) => {
-                let _ = attack(client, hit.entity, hit.location);
+                let _ = attack(client, hit.entity, Some(hit.location));
             }
             HitResult::Block(hit) if !hit.miss => {
                 let seq = self.predict();
