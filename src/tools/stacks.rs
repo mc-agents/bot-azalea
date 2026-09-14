@@ -105,7 +105,7 @@ pub fn needle(query: &str) -> String {
 }
 
 /// The name on the tooltip: the custom name, else the item's own, in the client's language.
-fn shown_as(stack: &ItemStack) -> String {
+pub fn shown_as(stack: &ItemStack) -> String {
     if let Some(custom) = stack.get_component::<CustomName>() {
         return custom.name.to_string();
     }

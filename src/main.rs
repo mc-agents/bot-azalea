@@ -7,6 +7,7 @@ mod game;
 mod health;
 mod hud;
 mod link;
+mod menus;
 mod text;
 mod tools;
 

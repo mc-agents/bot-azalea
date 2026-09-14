@@ -19,6 +19,7 @@ use super::args::{boolean, integer, plain, position, text, text_or, written};
 use super::text::component;
 use super::{Tool, alive, in_world, stacks, tick};
 use crate::bot::Bot;
+use crate::menus::Menus;
 use crate::calls::{Answer, Failure, Outcome};
 
 /// A player inventory is 36 slots wherever it is attached.
@@ -75,21 +76,60 @@ pub fn received(bot: &Bot, client: &Client, packet: &ClientboundGamePacket) {
     }
 }
 
-/// An open window: a container the server opened. The player's own inventory is not one, because
-/// nothing here opens it.
-struct Window {
-    id: i32,
-    menu: Menu,
-    title: FormattedText,
+/// A menu the server opened. The player's own inventory is not one, because nothing here opens it.
+pub(super) struct Window {
+    pub(super) id: i32,
+    pub(super) menu: Menu,
+    pub(super) title: FormattedText,
 }
 
-fn open(client: &Client) -> Option<Window> {
+/// The menu the server opened, whatever draws it.
+pub(super) fn menu(client: &Client) -> Option<Window> {
     let inventory = client.get_component::<Inventory>()?;
     Some(Window {
         id: inventory.id,
         menu: inventory.container_menu.clone()?,
         title: inventory.container_menu_title.clone().unwrap_or_default(),
     })
+}
+
+/// An open window: a menu drawn as slots. A lectern is a menu the game draws as a book, and every
+/// tool that reads or clicks a window finds nothing open in front of one, as a player's client does.
+fn open(client: &Client) -> Option<Window> {
+    menu(client).filter(|window| !matches!(window.menu, Menu::Lectern { .. }))
+}
+
+/// The client's own name for the screen a menu is drawn by, which is what a refusal names when the
+/// screen is the wrong one.
+pub(super) fn screen(menu: &Menu) -> &'static str {
+    match menu {
+        Menu::Generic9x1 { .. }
+        | Menu::Generic9x2 { .. }
+        | Menu::Generic9x3 { .. }
+        | Menu::Generic9x4 { .. }
+        | Menu::Generic9x5 { .. }
+        | Menu::Generic9x6 { .. } => "ContainerScreen",
+        Menu::Generic3x3 { .. } => "DispenserScreen",
+        Menu::Crafter3x3 { .. } => "CrafterScreen",
+        Menu::Anvil { .. } => "AnvilScreen",
+        Menu::Beacon { .. } => "BeaconScreen",
+        Menu::BlastFurnace { .. } => "BlastFurnaceScreen",
+        Menu::BrewingStand { .. } => "BrewingStandScreen",
+        Menu::Crafting { .. } => "CraftingScreen",
+        Menu::Enchantment { .. } => "EnchantmentScreen",
+        Menu::Furnace { .. } => "FurnaceScreen",
+        Menu::Grindstone { .. } => "GrindstoneScreen",
+        Menu::Hopper { .. } => "HopperScreen",
+        Menu::Lectern { .. } => "LecternScreen",
+        Menu::Loom { .. } => "LoomScreen",
+        Menu::Merchant { .. } => "MerchantScreen",
+        Menu::ShulkerBox { .. } => "ShulkerBoxScreen",
+        Menu::Smithing { .. } => "SmithingScreen",
+        Menu::Smoker { .. } => "SmokerScreen",
+        Menu::CartographyTable { .. } => "CartographyTableScreen",
+        Menu::Stonecutter { .. } => "StonecutterScreen",
+        Menu::Player(_) => "InventoryScreen",
+    }
 }
 
 /// A window whose contents have arrived. The server opens a window and fills it in two packets,
@@ -133,7 +173,7 @@ fn describe(window: &Window) -> Value {
 
 /// The registry name of a window's type. azalea keeps the menu and not the type it was opened as,
 /// and the two name each other one to one.
-fn kind(menu: &Menu) -> &'static str {
+pub(super) fn kind(menu: &Menu) -> &'static str {
     let kind = match menu {
         Menu::Player(_) => return "minecraft:inventory",
         Menu::Generic9x1 { .. } => MenuKind::Generic9x1,
@@ -213,6 +253,14 @@ pub async fn click(bot: &Bot, window: i32, slot: i16, button: u8, click_type: Cl
     Ok(())
 }
 
+/// Ask the server for the whole window again, with a click that changes nothing: a middle-click
+/// outside it, which only a creative player with an empty cursor on a slot makes anything of. A menu
+/// action that is not a click -- picking a trade, pressing a menu button -- is answered with only what
+/// changed, or with nothing, and this is what a tool waits on before it reads what the action did.
+pub(super) async fn resync(bot: &Bot, window: i32) -> Result<(), Failure> {
+    click(bot, window, OUTSIDE, 0, ClickType::Clone).await
+}
+
 /// A stack in the player's own inventory by its index there: 0-8 the hotbar, 40 the off-hand. A
 /// number-key swap names its second stack this way, and the off-hand is in no container window.
 fn inventory_item(inventory: &Inventory, index: u8) -> ItemStack {
@@ -252,18 +300,28 @@ pub const CLOSE_WINDOW: Tool = Tool {
                 showing
             })?;
             if credits {
-                return Ok(Answer::data(
-                    "close-window",
-                    json!({"closed": "", "closedComponent": component(&FormattedText::default()), "screen": "end credits"}),
-                ));
+                return Ok(Answer::data("close-window", untitled("end credits")));
+            }
+
+            /* A book is drawn over the world rather than as a menu, and closing it tells the server nothing. */
+            let book = in_world(&bot, |game| {
+                game.client
+                    .try_query_self::<&mut Menus, _>(|mut menus| menus.book.take().is_some())
+                    .unwrap_or_default()
+            })?;
+            if book {
+                return Ok(Answer::data("close-window", untitled("book")));
             }
 
             /* Asking to close nothing is a no-op, not a mistake. */
-            let Some(window) = in_world(&bot, |game| open(&game.client))? else {
+            let Some(window) = in_world(&bot, |game| menu(&game.client))? else {
                 return Ok(Answer::data("close-window", json!({"closed": null, "screen": null})));
             };
 
             alive(&bot, |game| ContainerHandleRef::new(window.id, game.client.clone()).close())?;
+            if matches!(window.menu, Menu::Lectern { .. }) {
+                return Ok(Answer::data("close-window", untitled("lectern")));
+            }
             Ok(Answer::data(
                 "close-window",
                 json!({
@@ -275,6 +333,11 @@ pub const CLOSE_WINDOW: Tool = Tool {
         })
     },
 };
+
+/// A screen with no title of its own, closed: the book screen has none, and neither does a lectern's.
+fn untitled(screen: &str) -> Value {
+    json!({"closed": "", "closedComponent": component(&FormattedText::default()), "screen": screen})
+}
 
 pub const WAIT_FOR_WINDOW: Tool = Tool {
     name: "wait-for-window",

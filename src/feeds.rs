@@ -29,6 +29,7 @@ pub fn chat(bot: &Bot, packet: &ChatPacket) {
 
     let message = packet.message();
     let _ = bot.heard.send(message.to_string());
+    bot.remember(message.clone());
 
     if !bot.wants("chat") {
         return;

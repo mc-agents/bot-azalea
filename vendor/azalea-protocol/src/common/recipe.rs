@@ -1,5 +1,5 @@
 use azalea_buf::AzBuf;
-use azalea_inventory::ItemStack;
+use azalea_inventory::DataComponentPatch;
 use azalea_registry::{
     HolderSet,
     builtin::{DataComponentKind, ItemKind},
@@ -95,7 +95,16 @@ pub struct ItemSlotDisplay {
 }
 #[derive(AzBuf, Clone, Debug, PartialEq)]
 pub struct ItemStackSlotDisplay {
-    pub stack: ItemStack,
+    pub stack: ItemStackTemplate,
+}
+/// A stack that stands for an item rather than sitting in a slot: the item, then the count, then
+/// the components, and never empty. 26.x sends a display's stack this way.
+#[derive(AzBuf, Clone, Debug, PartialEq)]
+pub struct ItemStackTemplate {
+    pub item: ItemKind,
+    #[var]
+    pub count: i32,
+    pub components: DataComponentPatch,
 }
 #[derive(AzBuf, Clone, Debug, PartialEq)]
 pub struct DyedSlotDemo {

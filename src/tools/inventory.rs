@@ -31,7 +31,7 @@ const INVENTORY_WINDOW: i32 = 0;
 /// azalea keeps a second copy of the carried slots inside an open container and copies it back
 /// only when the container closes, so while one is open the inventory window's own copy is the one
 /// from before it opened. The container's is the current one.
-fn player_menu(inventory: &Inventory) -> Menu {
+pub(super) fn player_menu(inventory: &Inventory) -> Menu {
     let mut menu = inventory.inventory_menu.clone();
     if let Some(container) = &inventory.container_menu {
         let from = *container.player_slots_range().start();

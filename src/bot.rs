@@ -1,7 +1,8 @@
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use azalea::FormattedText;
 use serde_json::{Map, Value, json};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
@@ -36,6 +37,10 @@ pub struct Bot {
     /// The action bar, the titles and the sounds as the text a pattern is matched against, by feed,
     /// for a press that has to land on the tick a line arrives rather than a round trip later.
     pub shown: broadcast::Sender<(&'static str, String)>,
+    /// The chat lines still on screen, newest first, kept as components so a click event in one can
+    /// be pressed. Bounded like the client's own history: what is off the screen is not clickable for
+    /// a player either.
+    pub said: RefCell<VecDeque<FormattedText>>,
     pub ticks: watch::Sender<u64>,
     /// The window the server last sent the whole of, or `None` once a new one has opened and its
     /// contents have not arrived. Sent on every arrival, equal or not, because an arrival is what a
@@ -58,9 +63,18 @@ impl Bot {
             runs: RefCell::new(Runs::new()),
             heard: broadcast::channel(64).0,
             shown: broadcast::channel(256).0,
+            said: RefCell::new(VecDeque::new()),
             ticks: watch::channel(0).0,
             contents: watch::channel(None).0,
         }
+    }
+
+    /// A hundred lines is more than a client shows and less than anything worth measuring.
+    pub fn remember(&self, line: FormattedText) {
+        const KEPT: usize = 100;
+        let mut said = self.said.borrow_mut();
+        said.push_front(line);
+        said.truncate(KEPT);
     }
 
     pub fn attach(&self, outbox: mpsc::UnboundedSender<Vec<u8>>) {

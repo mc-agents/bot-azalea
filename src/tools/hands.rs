@@ -234,7 +234,7 @@ impl Drop for Using {
 }
 
 /// Walk until a block is within reach, feet to its corner.
-async fn approach(bot: &Bot, block: BlockPos) -> Result<(), Failure> {
+pub(super) async fn approach(bot: &Bot, block: BlockPos) -> Result<(), Failure> {
     let mut approach = Approach::new();
     let corner = Vec3::new(block.x as f64, block.y as f64, block.z as f64);
     while !approach.reached(bot, corner, &written(block))? {
@@ -248,7 +248,7 @@ async fn approach(bot: &Bot, block: BlockPos) -> Result<(), Failure> {
 /// azalea's own right-click makes one up when the bot is not looking at the block -- its middle,
 /// on the top face -- and a block placed against a side then lands on top instead. The bot still
 /// turns to the spot, because a server that watches where a player looks should see it look there.
-fn use_item_on(client: &Client, block: BlockPos, direction: Direction, location: Vec3) {
+pub(super) fn use_item_on(client: &Client, block: BlockPos, direction: Direction, location: Vec3) {
     client.look_at(location);
     let seq = client.query_self::<&mut BlockStatePredictionHandler, _>(|mut prediction| prediction.start_predicting());
     client.write_packet(ServerboundUseItemOn {

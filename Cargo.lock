@@ -810,6 +810,7 @@ name = "bot-azalea"
 version = "0.10.0"
 dependencies = [
  "azalea",
+ "azalea-chat",
  "bevy_ecs",
  "indexmap",
  "parking_lot",

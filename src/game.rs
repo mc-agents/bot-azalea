@@ -27,6 +27,7 @@ use crate::bot::{Bot, now_millis};
 use crate::calls::{self, Answer, Failure, Outcome};
 use crate::feeds;
 use crate::hud::{self, Hud, HudPackets, HudPlugin};
+use crate::menus::{Known, Menus, MenusPlugin};
 
 /// The world the bot is in, while it is in one.
 pub struct Game {
@@ -123,6 +124,7 @@ fn ecs() -> Arc<RwLock<World>> {
             DefaultBotPlugins.build().disable::<AutoRespawnPlugin>().disable::<AutoReconnectPlugin>(),
             DefaultSwarmPlugins,
             HudPlugin,
+            MenusPlugin,
         ));
         let (ecs, start, _exit) = start_ecs_runner(app.main_mut());
         start();
@@ -165,7 +167,7 @@ async fn join(bot: Rc<Bot>, host: String, port: u16, username: String, spawn_tim
     .await;
     let (events, receiver) = mpsc::unbounded_channel();
     let (packets, hud_packets) = mpsc::unbounded_channel();
-    ecs().write().entity_mut(client.entity).insert((LocalPlayerEvents(events), HudPackets(packets)));
+    ecs().write().entity_mut(client.entity).insert((LocalPlayerEvents(events), HudPackets(packets), Menus::default(), Known::default()));
 
     let (alive, ended) = oneshot::channel();
     *bot.game.borrow_mut() = Some(Game {

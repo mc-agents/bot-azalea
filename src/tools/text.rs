@@ -1,10 +1,17 @@
 use azalea::FormattedText;
+use azalea_chat::translatable_component::TranslatableComponent;
 use serde_json::Value;
 
 /// A component as JSON, for mcp-server to flatten. azalea has already parsed it, so what goes is
 /// what it kept; a hover event is not part of that, and nothing a reader is shown depends on one.
 pub fn component(text: &FormattedText) -> Value {
     serde_json::to_value(text).unwrap_or_default()
+}
+
+/// A translation key in the client's language, which is how the game names what a menu draws: an
+/// effect, a banner pattern, an enchantment level. A key the table lacks comes back as the key.
+pub fn translated(key: &str) -> String {
+    FormattedText::Translatable(TranslatableComponent::new(key.to_owned(), Vec::new())).to_string()
 }
 
 /// A number as the other kind of bot writes it in a sentence: 8.0 is "8".

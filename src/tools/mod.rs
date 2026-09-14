@@ -2,6 +2,7 @@ mod approach;
 mod args;
 mod blocks;
 mod body;
+mod book;
 mod chat;
 mod command;
 mod entities;
@@ -9,10 +10,13 @@ mod hands;
 mod hud;
 mod input;
 mod inventory;
+mod options;
 mod player;
 mod position;
+mod recipes;
 mod stacks;
 mod text;
+mod trades;
 mod wait;
 mod walk;
 mod windows;
@@ -54,6 +58,17 @@ const TOOLS: &[Tool] = &[
     hud::READ_PLAYER_LIST,
     world::GET_WORLD_STATE,
     wait::WAIT_TICKS,
+    chat::CLICK_CHAT,
+    trades::READ_TRADES,
+    trades::SELECT_TRADE,
+    options::READ_CONTAINER_OPTIONS,
+    options::PRESS_CONTAINER_BUTTON,
+    options::SET_BEACON_EFFECTS,
+    book::READ_BOOK,
+    recipes::CAN_CRAFT,
+    recipes::GET_RECIPE,
+    recipes::LIST_RECIPES,
+    recipes::CRAFT_ITEM,
     entities::FIND_ENTITY,
     entities::ATTACK_ENTITY,
     entities::INTERACT_ENTITY,
