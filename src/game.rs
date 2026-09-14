@@ -67,6 +67,11 @@ impl Game {
         self.spawned.set(true);
     }
 
+    /// Up again, so the last death no longer describes the bot.
+    pub fn forget_death(&self) {
+        self.cause_of_death.borrow_mut().take();
+    }
+
     pub fn describe(&self, status: &mut Value) {
         status["address"] = json!(self.address);
         status["username"] = json!(self.username);

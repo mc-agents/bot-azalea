@@ -1,9 +1,11 @@
 mod approach;
 mod args;
 mod blocks;
+mod body;
 mod chat;
 mod command;
 mod entities;
+mod hands;
 mod hud;
 mod inventory;
 mod player;
@@ -11,6 +13,7 @@ mod position;
 mod stacks;
 mod text;
 mod wait;
+mod walk;
 mod windows;
 mod world;
 
@@ -64,6 +67,16 @@ const TOOLS: &[Tool] = &[
     windows::CLICK_SLOT,
     windows::DRAG_SLOTS,
     windows::DROP_HELD_ITEM,
+    body::LOOK_AT,
+    body::JUMP,
+    body::SET_STANCE,
+    body::MOVE_IN_DIRECTION,
+    body::RESPAWN,
+    walk::MOVE_TO_POSITION,
+    hands::DIG_BLOCK,
+    hands::PLACE_BLOCK,
+    hands::ACTIVATE_BLOCK,
+    hands::USE_HELD_ITEM,
 ];
 
 pub fn find(name: &str) -> Option<&'static Tool> {
