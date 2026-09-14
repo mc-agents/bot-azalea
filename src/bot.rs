@@ -3,9 +3,10 @@ use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use crate::config::Config;
+use crate::feeds::Runs;
 use crate::game::Game;
 use crate::link::frame;
 
@@ -24,6 +25,10 @@ pub struct Bot {
     pub game: RefCell<Option<Game>>,
     feeds: RefCell<Map<String, Value>>,
     seq: Cell<u64>,
+    /// The folded feeds' open runs, which outlive a connection only long enough to be closed.
+    pub runs: RefCell<Runs>,
+    /// Every chat line as text, for a call waiting on the one thing a proxy only says in chat.
+    pub heard: broadcast::Sender<String>,
     pub ticks: watch::Sender<u64>,
 }
 
@@ -37,6 +42,8 @@ impl Bot {
             game: RefCell::new(None),
             feeds: RefCell::new(Map::new()),
             seq: Cell::new(0),
+            runs: RefCell::new(Runs::new()),
+            heard: broadcast::channel(64).0,
             ticks: watch::channel(0).0,
         }
     }

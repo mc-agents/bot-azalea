@@ -66,6 +66,9 @@ docker run --rm -e MCP_SERVER_HOST=host.docker.internal -e BOT_NAME=a1 bot-azale
 
 - **Components arrive as azalea parsed them.** Hover events are dropped, and a translate key is
   resolved by nothing, since there is no language table. Fonts and colours survive.
-- **Much of the HUD is decoded and not kept by azalea**: action bar, titles, boss bars, scoreboard,
-  advancements, dialogs, block entities. Each has to be tracked here before a tool can read it.
+- **Much of what a server sends is decoded and not kept by azalea.** The action bar, titles, dialogs,
+  boss bars, the scoreboard and the clock are tracked here (`src/hud.rs`); advancements and block
+  entities are not yet, and nothing reads them.
+- **Commands go unsigned.** azalea signs chat and nothing else, so a server in online mode that
+  enforces secure profiles will not run a command with a signed argument, such as `/msg`.
 - **A disconnected client stays in the ECS.** Joining again and again in one process grows it.

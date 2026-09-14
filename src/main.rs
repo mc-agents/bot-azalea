@@ -5,7 +5,9 @@ mod config;
 mod feeds;
 mod game;
 mod health;
+mod hud;
 mod link;
+mod text;
 mod tools;
 
 use std::rc::Rc;

@@ -5,9 +5,16 @@ edition = "2024"
 publish = false
 
 [dependencies]
-azalea = "=0.16.0"
+# Without packet-event, which is on by default and hands every packet the server sends -- every
+# chunk, every entity moving -- to the event channel, one wake of the bot's task each. The HUD
+# packets are read inside the ECS instead, and only those cross to the bot.
+azalea = { version = "=0.16.0", default-features = false, features = ["log", "serde", "online-mode"] }
+# azalea's ECS, named because its derive macros refer to it by crate name. The version follows azalea's.
+bevy_ecs = "0.18"
 # The lock azalea keeps its ECS behind. Named here only to hold it, so the version follows azalea's.
 parking_lot = "0.12"
+# The NBT a dialog arrives in, named for its serde feature so it can go on the wire as JSON.
+simdnbt = { version = "0.10", features = ["serde"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "macros", "net", "io-util", "time", "sync"] }
 tracing = "0.1"

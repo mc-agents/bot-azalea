@@ -1,9 +1,12 @@
 mod args;
 mod blocks;
 mod chat;
+mod command;
+mod hud;
 mod player;
 mod position;
 mod wait;
+mod world;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -31,6 +34,13 @@ const TOOLS: &[Tool] = &[
     blocks::GET_BLOCK_INFO,
     blocks::FIND_BLOCKS,
     chat::SEND_CHAT,
+    command::RUN_COMMAND,
+    command::COMPLETE_COMMAND,
+    command::SWITCH_SERVER,
+    hud::READ_SCOREBOARD,
+    hud::READ_BOSS_BARS,
+    hud::READ_PLAYER_LIST,
+    world::GET_WORLD_STATE,
     wait::WAIT_TICKS,
 ];
 

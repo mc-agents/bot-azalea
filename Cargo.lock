@@ -812,8 +812,10 @@ name = "bot-azalea"
 version = "0.2.0"
 dependencies = [
  "azalea",
+ "bevy_ecs",
  "parking_lot",
  "serde_json",
+ "simdnbt",
  "tokio",
  "tracing",
  "tracing-subscriber",

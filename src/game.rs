@@ -1,4 +1,4 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -13,6 +13,7 @@ use azalea::ecs::world::World;
 use azalea::events::LocalPlayerEvents;
 use azalea::join::{ConnectOpts, StartJoinServerEvent};
 use azalea::protocol::address::ResolvableAddr;
+use azalea::protocol::packets::game::ClientboundGamePacket;
 use azalea::swarm::DefaultSwarmPlugins;
 use azalea::task_pool::{TaskPoolOptions, TaskPoolPlugin};
 use azalea::{DefaultPlugins, Event, start_ecs_runner};
@@ -24,6 +25,7 @@ use tracing::info;
 use crate::bot::{Bot, now_millis};
 use crate::calls::{self, Answer, Failure, Outcome};
 use crate::feeds;
+use crate::hud::{self, Hud, HudPackets, HudPlugin};
 
 /// The world the bot is in, while it is in one.
 pub struct Game {
@@ -37,7 +39,8 @@ pub struct Game {
     /// Set when the server told us to leave, so the disconnect that follows reads as leaving and
     /// not as being dropped.
     leaving: Cell<bool>,
-    cause_of_death: std::cell::RefCell<Option<String>>,
+    cause_of_death: RefCell<Option<String>>,
+    pub hud: RefCell<Hud>,
 }
 
 impl Game {
@@ -48,6 +51,17 @@ impl Game {
     /// What killed the bot, while it is dead: the message the server sent with the death.
     pub fn cause_of_death(&self) -> Option<String> {
         self.cause_of_death.borrow().clone()
+    }
+
+    /// A proxy moving the bot takes the connection back to configuration, and azalea takes the
+    /// player's components away until the next login -- a tool that read a position then would
+    /// find none and take the process down with it.
+    pub fn reconfiguring(&self) {
+        self.spawned.set(false);
+    }
+
+    pub fn arrived(&self) {
+        self.spawned.set(true);
     }
 
     pub fn describe(&self, status: &mut Value) {
@@ -84,6 +98,7 @@ fn ecs() -> Arc<RwLock<World>> {
             }),
             DefaultBotPlugins.build().disable::<AutoRespawnPlugin>().disable::<AutoReconnectPlugin>(),
             DefaultSwarmPlugins,
+            HudPlugin,
         ));
         let (ecs, start, _exit) = start_ecs_runner(app.main_mut());
         start();
@@ -124,7 +139,8 @@ async fn join(bot: Rc<Bot>, host: String, port: u16, username: String, spawn_tim
     })
     .await;
     let (events, receiver) = mpsc::unbounded_channel();
-    ecs().write().entity_mut(client.entity).insert(LocalPlayerEvents(events));
+    let (packets, hud_packets) = mpsc::unbounded_channel();
+    ecs().write().entity_mut(client.entity).insert((LocalPlayerEvents(events), HudPackets(packets)));
 
     *bot.game.borrow_mut() = Some(Game {
         generation,
@@ -133,11 +149,12 @@ async fn join(bot: Rc<Bot>, host: String, port: u16, username: String, spawn_tim
         username: username.clone(),
         spawned: Cell::new(false),
         leaving: Cell::new(false),
-        cause_of_death: std::cell::RefCell::new(None),
+        cause_of_death: RefCell::new(None),
+        hud: RefCell::new(Hud::default()),
     });
 
     let (joined, outcome) = oneshot::channel();
-    tokio::task::spawn_local(pump(bot.clone(), generation, receiver, joined));
+    tokio::task::spawn_local(pump(bot.clone(), generation, receiver, hud_packets, joined));
 
     match tokio::time::timeout(spawn_timeout, outcome).await {
         Ok(Ok(Ok(()))) => {
@@ -186,6 +203,7 @@ fn leave(bot: &Bot) {
     if let Some(game) = bot.game.borrow_mut().take() {
         game.leaving.set(true);
         game.client.disconnect();
+        feeds::close_all(bot);
     }
 }
 
@@ -194,13 +212,31 @@ async fn pump(
     bot: Rc<Bot>,
     generation: u64,
     mut events: mpsc::UnboundedReceiver<Event>,
+    mut packets: mpsc::UnboundedReceiver<Arc<ClientboundGamePacket>>,
     joined: oneshot::Sender<Result<(), Failure>>,
 ) {
     let mut joined = Some(joined);
     let mut logged_in = false;
     let mine = |bot: &Bot| bot.game.borrow().as_ref().is_some_and(|game| game.generation == generation);
+    let mut flush = tokio::time::interval(Duration::from_secs(1));
 
-    while let Some(event) = events.recv().await {
+    loop {
+        let event = tokio::select! {
+            event = events.recv() => match event {
+                Some(event) => event,
+                None => break,
+            },
+            Some(packet) = packets.recv() => {
+                if mine(&bot) {
+                    hud::apply(&bot, &packet);
+                }
+                continue;
+            }
+            _ = flush.tick() => {
+                feeds::flush(&bot);
+                continue;
+            }
+        };
         match event {
             Event::Login => logged_in = true,
             Event::Spawn => {
@@ -243,6 +279,7 @@ async fn pump(
                 }
                 if mine(&bot) {
                     bot.game.borrow_mut().take();
+                    feeds::close_all(&bot);
                 }
                 info!("disconnected at {}: {reason}", now_millis());
                 break;
