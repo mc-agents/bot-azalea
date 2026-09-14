@@ -132,7 +132,7 @@ pub const PRESS_INPUT: Tool = Tool {
 
             let client = alive(&bot, |game| game.client.clone())?;
             /* A dialog is a screen on the other kind of bot, and keys go to it there too. */
-            let dialog = alive(&bot, |game| game.hud.borrow().dialog_open)?;
+            let dialog = alive(&bot, |game| game.hud.borrow().dialog.is_some())?;
             if dialog || client.get_component::<Inventory>().is_some_and(|inventory| inventory.container_menu.is_some()) {
                 return Err(Failure::refused("WINDOW_OPEN", "a window is open, and keys go to it rather than to the game; close-window first."));
             }

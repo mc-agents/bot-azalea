@@ -14,6 +14,7 @@ use azalea::core::data_registry::ResolvableDataRegistry;
 use azalea::ecs::prelude::*;
 use azalea::packet::game::ReceiveGamePacketEvent;
 use azalea::protocol::packets::game::ClientboundGamePacket;
+use azalea::protocol::packets::game::c_commands::ClientboundCommands;
 use azalea::protocol::packets::game::c_boss_event::{BossBarColor, BossBarOverlay, Operation};
 use azalea::protocol::packets::game::c_game_event::EventType;
 use azalea::protocol::packets::game::c_set_display_objective::DisplaySlot;
@@ -25,6 +26,7 @@ use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::bot::Bot;
+use crate::dialog::Open;
 use crate::feeds;
 
 /// Where the packets the bot keeps go, one per connection.
@@ -72,6 +74,8 @@ fn kept(packet: &ClientboundGamePacket) -> bool {
             | P::GameEvent(_)
             | P::ShowDialog(_)
             | P::ClearDialog(_)
+            /* The command tree, which says whether the client would run a command a dialog asks for. */
+            | P::Commands(_)
             | P::PlayerInfoUpdate(_)
             | P::PlayerInfoRemove(_)
             | P::CommandSuggestions(_)
@@ -142,9 +146,10 @@ pub struct Hud {
     /// The end credits are up. The client shows them for any win-game event, whatever its value,
     /// and they hold the player outside every world until it asks to respawn.
     pub credits: bool,
-    /// A dialog the server put up and has not cleared. This kind of bot cannot press one away, so only
-    /// the server or a new world ends it.
-    pub dialog_open: bool,
+    /// The dialog on screen, with what its inputs hold. Kept even when its definition could not be
+    /// read, because keys still go to it and not to the game.
+    pub dialog: Option<Open>,
+    pub commands: Option<ClientboundCommands>,
 }
 
 pub enum Slot {
@@ -229,13 +234,18 @@ pub fn apply(bot: &Bot, packet: &ClientboundGamePacket) {
         P::SetTitleText(p) => feeds::title(bot, "title", &p.text),
         P::SetSubtitleText(p) => feeds::title(bot, "subtitle", &p.text),
         P::ShowDialog(p) => {
-            dialog_open(bot, true);
-            if let Some(dialog) = dialog(bot, &p.dialog) {
-                feeds::dialog(bot, dialog);
+            let dialog = dialog(bot, &p.dialog);
+            if let Some(dialog) = &dialog {
+                feeds::dialog(bot, dialog.clone());
+            }
+            if let Some(game) = bot.game.borrow().as_ref() {
+                game.hud.borrow_mut().dialog = Some(Open::new(dialog.unwrap_or(Value::Null)));
             }
         }
         P::ClearDialog(_) => {
-            dialog_open(bot, false);
+            if let Some(game) = bot.game.borrow().as_ref() {
+                game.hud.borrow_mut().dialog = None;
+            }
             feeds::dialog_closed(bot);
         }
         P::Sound(p) => feeds::sound(bot, match &p.sound {
@@ -257,12 +267,6 @@ pub fn apply(bot: &Bot, packet: &ClientboundGamePacket) {
                 _ => {}
             }
         }
-    }
-}
-
-fn dialog_open(bot: &Bot, open: bool) {
-    if let Some(game) = bot.game.borrow().as_ref() {
-        game.hud.borrow_mut().dialog_open = open;
     }
 }
 
@@ -390,6 +394,7 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
                 hud.listed.remove(&uuid.as_u128());
             }
         }
+        P::Commands(p) => hud.commands = Some(p.clone()),
         P::CommandSuggestions(p) => {
             if let Some(answer) = hud.completions.remove(&p.id) {
                 let _ = answer.send(p.suggestions.clone());

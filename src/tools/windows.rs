@@ -313,6 +313,33 @@ pub const CLOSE_WINDOW: Tool = Tool {
                 return Ok(Answer::data("close-window", untitled("book")));
             }
 
+            /* A dialog is drawn over any window, and Escape closes it first, running its exit button. */
+            let dialog = in_world(&bot, |game| {
+                let mut hud = game.hud.borrow_mut();
+                let Some(dialog) = hud.dialog.as_ref() else { return Ok(None) };
+                if !dialog.closes_on_escape() {
+                    return Err(Failure::refused(
+                        "SCREEN_STAYS_OPEN",
+                        "the dialog does not close on Escape, so it is not closed from here either.",
+                    ));
+                }
+                let title = dialog.title();
+                if let Some(exit) = dialog.exit()
+                    && let Some(action) = &exit.action
+                {
+                    /* What the exit button runs is not what was asked for, so a command it will not run is not refused here. */
+                    let _ = super::dialogs::run(&game.client, hud.commands.as_ref(), dialog, action, &exit.label);
+                }
+                hud.dialog = None;
+                Ok(Some(title))
+            })??;
+            if let Some((title, title_component)) = dialog {
+                return Ok(Answer::data(
+                    "close-window",
+                    json!({"closed": title, "closedComponent": title_component, "screen": "dialog"}),
+                ));
+            }
+
             /* Asking to close nothing is a no-op, not a mistake. */
             let Some(window) = in_world(&bot, |game| menu(&game.client))? else {
                 return Ok(Answer::data("close-window", json!({"closed": null, "screen": null})));
