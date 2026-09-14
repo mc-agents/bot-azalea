@@ -26,10 +26,21 @@ pub const SEND_CHAT: Tool = Tool {
                 ));
             }
 
+            /*
+            A server that takes only signed chat drops an unsigned message and answers "Chat
+            disabled due to missing profile public key" -- after this had already said it was sent,
+            so a caller could not tell a handler that swallowed it from one that never got it.
+            */
             let username = in_world(&bot, |game| {
+                if game.hud.borrow().signed_chat_only {
+                    return Err(Failure::refused(
+                        "CHAT_UNSIGNED",
+                        "the server takes only signed chat, and this bot has no profile key to sign with, so it would drop the message. Commands are not signed: run-command still works.",
+                    ));
+                }
                 game.client.chat(message);
-                game.username.clone()
-            })?;
+                Ok(game.username.clone())
+            })??;
             Ok(Answer::text(format!("Sent as {username}: {message}")))
         })
     },

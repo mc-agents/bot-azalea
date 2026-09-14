@@ -171,6 +171,9 @@ pub struct Hud {
     /// The player's own entity id, from the login. The operator level arrives straight after it,
     /// before azalea has given the player the component that would say the same.
     player_id: Option<MinecraftEntityId>,
+    /// The server takes only signed chat, which it says at login. This bot never has a key to sign
+    /// with, so plain chat to such a server is dropped.
+    pub signed_chat_only: bool,
 }
 
 pub enum Slot {
@@ -501,7 +504,7 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
             through a proxy would otherwise show the last backend's sidebar on the next one.
             */
             let logins = hud.logins + 1;
-            *hud = Hud { logins, player_id: Some(p.player_id), ..Hud::default() };
+            *hud = Hud { logins, player_id: Some(p.player_id), signed_chat_only: p.enforces_secure_chat, ..Hud::default() };
             hud.dimension = Some((p.common.dimension_type, p.common.dimension.clone()));
         }
         P::Respawn(p) => {
