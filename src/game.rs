@@ -9,6 +9,7 @@ use azalea::app::{App, PluginGroup};
 use azalea::auto_reconnect::AutoReconnectPlugin;
 use azalea::auto_respawn::AutoRespawnPlugin;
 use azalea::bot::DefaultBotPlugins;
+use azalea::connection::RawConnection;
 use azalea::ecs::world::World;
 use azalea::events::LocalPlayerEvents;
 use azalea::join::{ConnectOpts, StartJoinServerEvent};
@@ -41,7 +42,22 @@ pub struct Game {
     leaving: Cell<bool>,
     cause_of_death: RefCell<Option<String>>,
     pub hud: RefCell<Hud>,
+    /// Closes when this connection's pump returns, which is once azalea has said it disconnected.
+    ended: oneshot::Receiver<()>,
 }
+
+/// A connection that was told to end and may not have yet.
+///
+/// azalea keeps one entity per account and refuses to start a join on it while its connection is
+/// alive, answering Ok and doing nothing. A rejoin under the same name sent straight after a leave
+/// reached it in that window, so the bot sat waiting for a spawn that was never asked for.
+pub struct Departing {
+    client: Client,
+    ended: oneshot::Receiver<()>,
+}
+
+/// How long a connection that was told to end is given to go. The disconnect is an ECS frame away.
+const TEARDOWN: Duration = Duration::from_secs(5);
 
 impl Game {
     /// Spawned, and still holding the world. A connection that ends strips the player of its world
@@ -128,6 +144,7 @@ pub fn connect(bot: &Rc<Bot>, message: &Value) {
 
 async fn join(bot: Rc<Bot>, host: String, port: u16, username: String, spawn_timeout: Duration) -> Outcome {
     leave(&bot);
+    torn_down(&bot).await;
     bot.status("connecting", None);
 
     let address = format!("{host}:{port}");
@@ -150,6 +167,7 @@ async fn join(bot: Rc<Bot>, host: String, port: u16, username: String, spawn_tim
     let (packets, hud_packets) = mpsc::unbounded_channel();
     ecs().write().entity_mut(client.entity).insert((LocalPlayerEvents(events), HudPackets(packets)));
 
+    let (alive, ended) = oneshot::channel();
     *bot.game.borrow_mut() = Some(Game {
         generation,
         client,
@@ -159,10 +177,11 @@ async fn join(bot: Rc<Bot>, host: String, port: u16, username: String, spawn_tim
         leaving: Cell::new(false),
         cause_of_death: RefCell::new(None),
         hud: RefCell::new(Hud::default()),
+        ended,
     });
 
     let (joined, outcome) = oneshot::channel();
-    tokio::task::spawn_local(pump(bot.clone(), generation, receiver, hud_packets, joined));
+    tokio::task::spawn_local(pump(bot.clone(), generation, receiver, hud_packets, joined, alive));
 
     match tokio::time::timeout(spawn_timeout, outcome).await {
         Ok(Ok(Ok(()))) => {
@@ -208,10 +227,25 @@ pub fn disconnect(bot: &Rc<Bot>, message: &Value) {
 }
 
 fn leave(bot: &Bot) {
-    if let Some(game) = bot.game.borrow_mut().take() {
-        game.leaving.set(true);
-        game.client.disconnect();
-        feeds::close_all(bot);
+    let Some(game) = bot.game.borrow_mut().take() else { return };
+    game.leaving.set(true);
+    game.client.disconnect();
+    feeds::close_all(bot);
+    *bot.departing.borrow_mut() = Some(Departing { client: game.client, ended: game.ended });
+}
+
+/// Wait until the connection the last leave ended is gone from azalea: its pump has seen the
+/// disconnect, and the entity no longer holds a connection a join would be refused for.
+///
+/// The pump ending is the disconnect event, which azalea sends from the frame that removes the
+/// connection; the component check covers the event arriving before that frame has applied it.
+async fn torn_down(bot: &Bot) {
+    let Some(Departing { client, ended }) = bot.departing.borrow_mut().take() else { return };
+    let deadline = tokio::time::Instant::now() + TEARDOWN;
+
+    let _ = tokio::time::timeout_at(deadline, ended).await;
+    while client.get_component::<RawConnection>().is_some() && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 
@@ -222,6 +256,7 @@ async fn pump(
     mut events: mpsc::UnboundedReceiver<Event>,
     mut packets: mpsc::UnboundedReceiver<Arc<ClientboundGamePacket>>,
     joined: oneshot::Sender<Result<(), Failure>>,
+    _alive: oneshot::Sender<()>,
 ) {
     let mut joined = Some(joined);
     let mut logged_in = false;

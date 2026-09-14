@@ -7,7 +7,7 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 use crate::config::Config;
 use crate::feeds::Runs;
-use crate::game::Game;
+use crate::game::{Departing, Game};
 use crate::link::frame;
 
 pub const KIND: &str = "azalea";
@@ -23,6 +23,8 @@ pub struct Bot {
     /// call answers, because its absence is how a call learns the link dropped under it.
     pub calls: RefCell<HashMap<String, Option<oneshot::Sender<String>>>>,
     pub game: RefCell<Option<Game>>,
+    /// The connection the last leave ended, until the next join has waited for it to go.
+    pub departing: RefCell<Option<Departing>>,
     feeds: RefCell<Map<String, Value>>,
     /// How often a folded run goes on the wire again, as the server's handshake set it.
     repeat_flush_ms: Cell<u64>,
@@ -49,6 +51,7 @@ impl Bot {
             linked: Cell::new(false),
             calls: RefCell::new(HashMap::new()),
             game: RefCell::new(None),
+            departing: RefCell::new(None),
             feeds: RefCell::new(Map::new()),
             repeat_flush_ms: Cell::new(1_000),
             seq: Cell::new(0),
