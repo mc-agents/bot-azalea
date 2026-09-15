@@ -46,6 +46,11 @@ pub struct Bot {
     /// contents have not arrived. Sent on every arrival, equal or not, because an arrival is what a
     /// click waits for.
     pub contents: watch::Sender<Option<i32>>,
+    /// The window the server last opened and its title, from the packet rather than the menu, so a
+    /// click that the server answered with a new window can say which.
+    pub opened: RefCell<Option<(i32, FormattedText)>>,
+    /// The window the server last closed.
+    pub closed: watch::Sender<Option<i32>>,
     /// What the last status said that a move can change, and the tick it went out on.
     pub reported: RefCell<Option<(String, u64)>>,
 }
@@ -68,6 +73,8 @@ impl Bot {
             said: RefCell::new(VecDeque::new()),
             ticks: watch::channel(0).0,
             contents: watch::channel(None).0,
+            opened: RefCell::new(None),
+            closed: watch::channel(None).0,
             reported: RefCell::new(None),
         }
     }

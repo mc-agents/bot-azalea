@@ -55,8 +55,12 @@ const CONTAINER_BLOCKS: &[&str] =
 /// state id, and the cursor a tool read was whatever azalea last guessed it to be.
 pub fn received(bot: &Bot, client: &Client, packet: &ClientboundGamePacket) {
     match packet {
-        ClientboundGamePacket::OpenScreen(_) => {
+        ClientboundGamePacket::OpenScreen(screen) => {
+            *bot.opened.borrow_mut() = Some((screen.container_id, screen.title.clone()));
             bot.contents.send_replace(None);
+        }
+        ClientboundGamePacket::ContainerClose(close) => {
+            bot.closed.send_replace(Some(close.container_id));
         }
         ClientboundGamePacket::ContainerSetContent(content) => {
             let _ = client.try_query_self::<&mut Inventory, _>(|mut inventory| {
@@ -216,9 +220,16 @@ fn out_of_range(slot: i64, menu: &Menu) -> Failure {
 ///
 /// `window` is the one the click is meant for. The server ignores a click for any other, and says
 /// nothing, so there is no answer to wait for then.
-pub async fn click(bot: &Bot, window: i32, slot: i16, button: u8, click_type: ClickType) -> Result<(), Failure> {
+///
+/// A plugin's menu often answers a click with another window -- a shop item opening the buy screen,
+/// a +1 opening that screen again -- and then never sends the one clicked. That window is the answer,
+/// and it comes back as what `window` holds in a click's DTO; so does the server closing the window.
+/// `None` is an answer in the window that was clicked.
+pub async fn click(bot: &Bot, window: i32, slot: i16, button: u8, click_type: ClickType) -> Result<Option<Value>, Failure> {
     let mut contents = bot.contents.subscribe();
     contents.borrow_and_update();
+    let mut closed = bot.closed.subscribe();
+    closed.borrow_and_update();
 
     let answered = alive(bot, |game| {
         let client = &game.client;
@@ -240,17 +251,44 @@ pub async fn click(bot: &Bot, window: i32, slot: i16, button: u8, click_type: Cl
         open == window
     })?;
 
-    if answered {
-        let _ = tokio::time::timeout(SETTLE, async {
-            while contents.changed().await.is_ok() {
-                if *contents.borrow_and_update() == Some(window) {
-                    break;
+    if !answered {
+        return Ok(None);
+    }
+    let replaced = tokio::time::timeout(SETTLE, async {
+        loop {
+            tokio::select! {
+                changed = contents.changed() => {
+                    if changed.is_err() {
+                        return None;
+                    }
+                    let arrived = *contents.borrow_and_update();
+                    if arrived == Some(window) {
+                        return None;
+                    }
+                    let opened = bot.opened.borrow().clone();
+                    if let (Some(id), Some((opened, title))) = (arrived, opened) {
+                        if id == opened {
+                            return Some(json!({
+                                "closed": false,
+                                "title": title.to_string(),
+                                "titleComponent": component(&title),
+                            }));
+                        }
+                    }
+                }
+                changed = closed.changed() => {
+                    if changed.is_err() {
+                        return None;
+                    }
+                    if *closed.borrow_and_update() == Some(window) {
+                        return Some(json!({"closed": true, "title": null, "titleComponent": null}));
+                    }
                 }
             }
-        })
-        .await;
-    }
-    Ok(())
+        }
+    })
+    .await;
+    Ok(replaced.ok().flatten())
 }
 
 /// Ask the server for the whole window again, with a click that changes nothing: a middle-click
@@ -258,7 +296,7 @@ pub async fn click(bot: &Bot, window: i32, slot: i16, button: u8, click_type: Cl
 /// action that is not a click -- picking a trade, pressing a menu button -- is answered with only what
 /// changed, or with nothing, and this is what a tool waits on before it reads what the action did.
 pub(super) async fn resync(bot: &Bot, window: i32) -> Result<(), Failure> {
-    click(bot, window, OUTSIDE, 0, ClickType::Clone).await
+    click(bot, window, OUTSIDE, 0, ClickType::Clone).await.map(|_| ())
 }
 
 /// A stack in the player's own inventory by its index there: 0-8 the hotbar, 40 the off-hand. A
@@ -503,7 +541,28 @@ pub const CLICK_SLOT: Tool = Tool {
             let swapped_before =
                 swap.map(|index| in_world(&bot, |game| inventory_item(&game.client.component::<Inventory>(), index))).transpose()?;
 
-            click(&bot, window.id, slot as i16, key, click_type).await?;
+            let replaced = click(&bot, window.id, slot as i16, key, click_type).await?;
+
+            if let Some(replaced) = replaced {
+                /* The window clicked is gone, and what its slots held is azalea's guess. */
+                let cursor = alive(&bot, |game| game.client.component::<Inventory>().carried.clone())?;
+                return Ok(Answer::data(
+                    "click-slot",
+                    json!({
+                        "slot": slot,
+                        "outside": false,
+                        "button": button,
+                        "shift": shift,
+                        "mode": mode,
+                        "hotbar": if hotbar == 0 { Value::Null } else { json!(hotbar) },
+                        "before": stacks::held(&before),
+                        "after": null,
+                        "cursor": stacks::held(&cursor),
+                        "swapped": null,
+                        "window": replaced,
+                    }),
+                ));
+            }
 
             let (after, cursor, swapped_after) = alive(&bot, |game| {
                 let client = &game.client;
@@ -544,6 +603,7 @@ pub const CLICK_SLOT: Tool = Tool {
                     "after": stacks::held(&after),
                     "cursor": stacks::held(&cursor),
                     "swapped": swapped,
+                    "window": null,
                 }),
             ))
         })
@@ -555,7 +615,7 @@ pub const CLICK_SLOT: Tool = Tool {
 async fn click_outside(bot: &Bot, window: &Window, button: String) -> Outcome {
     let before = in_world(bot, |game| game.client.component::<Inventory>().carried.clone())?;
 
-    click(bot, window.id, OUTSIDE, u8::from(button == "right"), ClickType::Pickup).await?;
+    let replaced = click(bot, window.id, OUTSIDE, u8::from(button == "right"), ClickType::Pickup).await?;
 
     let after = in_world(bot, |game| game.client.component::<Inventory>().carried.clone())?;
     Ok(Answer::data(
@@ -571,6 +631,7 @@ async fn click_outside(bot: &Bot, window: &Window, button: String) -> Outcome {
             "after": stacks::held(&after),
             "cursor": stacks::held(&after),
             "swapped": null,
+            "window": replaced,
         }),
     ))
 }
@@ -634,7 +695,7 @@ pub const DRAG_SLOTS: Tool = Tool {
             for slot in &slots {
                 click(&bot, window.id, *slot as i16, mask(1), ClickType::QuickCraft).await?;
             }
-            click(&bot, window.id, OUTSIDE, mask(2), ClickType::QuickCraft).await?;
+            let replaced = click(&bot, window.id, OUTSIDE, mask(2), ClickType::QuickCraft).await?;
 
             let (after, cursor) = in_world(&bot, |game| {
                 let inventory = game.client.component::<Inventory>();
@@ -643,10 +704,14 @@ pub const DRAG_SLOTS: Tool = Tool {
                 (after, inventory.carried.clone())
             })?;
 
+            /* A window the server replaced is gone, and what its slots held is azalea's guess. */
             let results: Vec<Value> = slots
                 .iter()
                 .zip(before.iter().zip(&after))
-                .map(|(slot, (before, after))| json!({"slot": slot, "before": stacks::held(before), "after": stacks::held(after)}))
+                .map(|(slot, (before, after))| {
+                    let after = if replaced.is_some() { Value::Null } else { stacks::held(after) };
+                    json!({"slot": slot, "before": stacks::held(before), "after": after})
+                })
                 .collect();
 
             Ok(Answer::data(
@@ -656,6 +721,7 @@ pub const DRAG_SLOTS: Tool = Tool {
                     "slots": results,
                     "carried": stacks::held(&carried),
                     "cursor": stacks::held(&cursor),
+                    "window": replaced,
                 }),
             ))
         })

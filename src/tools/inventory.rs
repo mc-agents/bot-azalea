@@ -131,8 +131,12 @@ pub const EQUIP_ITEM: Tool = Tool {
                 "hand" if (HOTBAR_START..=HOTBAR_END).contains(&source) => {
                     alive(&bot, |game| game.client.set_selected_hotbar_slot((source - HOTBAR_START) as u8))?;
                 }
-                "hand" => click(&bot, INVENTORY_WINDOW, source as i16, selected, ClickType::Swap).await?,
-                "off-hand" => click(&bot, INVENTORY_WINDOW, source as i16, OFF_HAND, ClickType::Swap).await?,
+                "hand" => {
+                    click(&bot, INVENTORY_WINDOW, source as i16, selected, ClickType::Swap).await?;
+                }
+                "off-hand" => {
+                    click(&bot, INVENTORY_WINDOW, source as i16, OFF_HAND, ClickType::Swap).await?;
+                }
                 "head" | "torso" | "legs" | "feet" => {
                     let worn = WORN_HEAD + ["head", "torso", "legs", "feet"].iter().position(|part| *part == destination).unwrap_or(3);
                     wear(&bot, source, worn).await?;
