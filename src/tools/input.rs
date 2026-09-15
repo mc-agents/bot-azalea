@@ -25,6 +25,7 @@ use super::entities::{aimed, attack, interact};
 use super::windows::swing;
 use super::{Tool, alive, tick};
 use crate::calls::{Answer, Failure};
+use crate::text::Line;
 
 const TICK_MS: u64 = 50;
 
@@ -87,8 +88,8 @@ impl Watch {
         Ok(Some(Watch { feed: text(given, "feed")?.to_owned(), source, pattern }))
     }
 
-    fn matches(&self, kind: &str, line: &str) -> bool {
-        self.feed == kind && self.pattern.is_match(line)
+    fn matches(&self, kind: &str, line: &Line) -> bool {
+        self.feed == kind && line.matches(&self.pattern)
     }
 
     fn describe(&self, matched: Option<&str>) -> Value {
@@ -169,13 +170,13 @@ pub const PRESS_INPUT: Tool = Tool {
                         match phase {
                             Phase::Waiting if after.as_ref().is_some_and(|after| after.matches(kind, &line)) => {
                                 waited = started.elapsed().as_millis() as u64;
-                                after_matched = Some(line);
+                                after_matched = Some(line.shown);
                                 keys.press();
                                 presses += 1;
                                 phase = Phase::Down(hold);
                             }
                             Phase::Down(_) | Phase::Up(_) if until.as_ref().is_some_and(|until| until.matches(kind, &line)) => {
-                                until_matched = Some(line);
+                                until_matched = Some(line.shown);
                                 stopped = "until";
                                 keys.release();
                                 break;

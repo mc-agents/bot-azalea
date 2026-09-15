@@ -1,4 +1,3 @@
-use azalea::FormattedText;
 use azalea::protocol::packets::game::c_boss_event::{BossBarColor, BossBarOverlay};
 use serde_json::json;
 
@@ -23,17 +22,22 @@ pub const READ_SCOREBOARD: Tool = Tool {
                 let hud = game.hud.borrow();
 
                 /* Nothing displayed is a state, not a failure, so the server says the words. */
-                hud.board(slot).map(|(objective, entries)| {
-                    let entries: Vec<_> = entries
+                hud.board(slot, &game.client.username()).map(|(objective, lines)| {
+                    /*
+                    Each line as the client draws it: the name between its team's prefix and suffix,
+                    and the score column as the number format makes it, which may be nothing. The
+                    owner the score is keyed by -- a uuid, a colour code, a handle -- is not shown.
+                    */
+                    let entries: Vec<_> = lines
                         .into_iter()
-                        .map(|(owner, score)| {
-                            /*
-                            The name the server gave the entry when it gave one, which is what the
-                            sidebar draws. The owner is the key it scores against -- a uuid or an
-                            internal handle on the servers that use one.
-                            */
-                            let name = score.display.clone().unwrap_or_else(|| FormattedText::from(owner));
-                            json!({"name": name.to_string(), "nameComponent": text::component(&name), "score": score.value})
+                        .map(|line| {
+                            json!({
+                                "name": text::readable(&line.name.to_string()),
+                                "nameComponent": text::component(&line.name),
+                                "score": line.score,
+                                "scoreText": text::readable(&line.value.to_string()),
+                                "scoreComponent": text::component(&line.value),
+                            })
                         })
                         .collect();
 

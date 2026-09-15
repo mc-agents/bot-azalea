@@ -17,8 +17,8 @@ use azalea::protocol::packets::game::ClientboundGamePacket;
 use azalea::protocol::packets::game::c_commands::ClientboundCommands;
 use azalea::protocol::packets::game::c_boss_event::{BossBarColor, BossBarOverlay, Operation};
 use azalea::protocol::packets::game::c_game_event::EventType;
-use azalea::protocol::packets::game::c_set_display_objective::DisplaySlot;
 use azalea::protocol::packets::game::c_set_objective::Method;
+use azalea::protocol::packets::game::c_set_player_team::{Method as TeamMethod, Parameters};
 use azalea::registry::data::DimensionKind;
 use azalea::registry::{DataRegistry, Holder};
 use azalea::block::BlockTrait;
@@ -26,6 +26,10 @@ use azalea::core::entity_id::MinecraftEntityId;
 use azalea::core::sound::CustomSound;
 use azalea::registry::builtin::{BlockEntityKind, BlockKind, SoundEvent};
 use azalea::{BlockPos, FormattedText, Identifier};
+use azalea_chat::base_component::BaseComponent;
+use azalea_chat::numbers::NumberFormat;
+use azalea_chat::style::{ChatFormatting, Style, TextColor};
+use azalea_chat::text_component::TextComponent;
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 
@@ -75,6 +79,7 @@ fn kept(packet: &ClientboundGamePacket) -> bool {
             | P::SetDisplayObjective(_)
             | P::SetScore(_)
             | P::ResetScore(_)
+            | P::SetPlayerTeam(_)
             | P::SetTime(_)
             | P::GameEvent(_)
             | P::ShowDialog(_)
@@ -108,12 +113,48 @@ fn kept(packet: &ClientboundGamePacket) -> bool {
 
 pub struct Objective {
     pub title: FormattedText,
+    /// How its scores are drawn, when it says: hidden, as fixed text, or as the number in a style.
+    pub number_format: Option<NumberFormat>,
 }
 
 pub struct Score {
     pub value: i32,
     pub display: Option<FormattedText>,
+    /// The entry's own format, which wins over the objective's.
+    pub number_format: Option<NumberFormat>,
 }
+
+/// What a team does to the names of its members wherever they are drawn.
+pub struct Team {
+    color: ChatFormatting,
+    prefix: FormattedText,
+    suffix: FormattedText,
+}
+
+impl From<&Parameters> for Team {
+    fn from(parameters: &Parameters) -> Team {
+        Team {
+            color: parameters.color,
+            prefix: parameters.player_prefix.clone(),
+            suffix: parameters.player_suffix.clone(),
+        }
+    }
+}
+
+/// A line of a board as the client draws it: the name, and the score column beside it.
+pub struct Line {
+    pub name: FormattedText,
+    pub score: i32,
+    pub value: FormattedText,
+}
+
+/// The display slots the protocol numbers: the list, the sidebar, below names, and a sidebar per
+/// team colour after those.
+const DISPLAY_SLOTS: usize = 19;
+const FIRST_TEAM_SLOT: usize = 3;
+
+/// The most lines a sidebar draws.
+const SIDEBAR_LINES: usize = 15;
 
 pub struct Bar {
     pub id: u128,
@@ -132,11 +173,14 @@ struct Clock {
 #[derive(Default)]
 pub struct Hud {
     pub objectives: HashMap<String, Objective>,
-    /// The objective in the list, sidebar and below-name slots, in that order. The team-coloured
-    /// sidebars are not kept: nothing reads them.
-    displayed: [Option<String>; 3],
+    /// The objective in each display slot, as the protocol numbers them. The client draws a
+    /// team-coloured sidebar in place of the plain one for a player whose team wears that colour.
+    displayed: [Option<String>; DISPLAY_SLOTS],
     /// Owner, then objective.
     scores: HashMap<String, HashMap<String, Score>>,
+    teams: HashMap<String, Team>,
+    /// The team each entry is on: a player's name, or an owner the server made up for a line.
+    members: HashMap<String, String>,
     /// In the order the server added them, which is the order the client stacks them in.
     pub bars: Vec<Bar>,
     clocks: HashMap<u32, Clock>,
@@ -178,6 +222,7 @@ pub struct Hud {
     pub signed_chat_only: bool,
 }
 
+#[derive(Clone, Copy, PartialEq)]
 pub enum Slot {
     List,
     Sidebar,
@@ -185,10 +230,17 @@ pub enum Slot {
 }
 
 impl Hud {
-    /// Entries on the objective in a slot, highest score first and then by name, the order the
-    /// sidebar draws them in.
-    pub fn board(&self, slot: Slot) -> Option<(&Objective, Vec<(&str, &Score)>)> {
-        let name = self.displayed[slot as usize].as_ref()?;
+    /// The board in a slot as the client draws it for the player named `me`: the lines in order,
+    /// highest score first and then by owner.
+    ///
+    /// The sidebar is the one the player's team colour names when that slot holds an objective, and
+    /// the plain one otherwise; it leaves out the owners starting with '#', stops at fifteen, and
+    /// draws each name between its team's prefix and suffix in the team's colour. The list and the
+    /// name below a player are drawn elsewhere, without any of that. The score column is whatever
+    /// the number format makes of the score: the entry's own, else the objective's, else the slot's
+    /// default style on the number.
+    pub fn board(&self, slot: Slot, me: &str) -> Option<(&Objective, Vec<Line>)> {
+        let name = self.objective_in(slot, me)?;
         let objective = self.objectives.get(name)?;
 
         let mut entries: Vec<(&str, &Score)> = self
@@ -198,7 +250,59 @@ impl Hud {
             .collect();
         entries.sort_by(|a, b| b.1.value.cmp(&a.1.value).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
 
-        Some((objective, entries))
+        let default_style = match slot {
+            Slot::Sidebar => Style::default().color(TextColor::try_from(ChatFormatting::Red).ok()),
+            Slot::List => Style::default().color(TextColor::try_from(ChatFormatting::Yellow).ok()),
+            Slot::BelowName => Style::default(),
+        };
+        let line = |(owner, score): (&str, &Score)| {
+            let name = score.display.clone().unwrap_or_else(|| FormattedText::from(owner));
+            Line {
+                name: if slot == Slot::Sidebar { self.team_name(owner, name) } else { name },
+                score: score.value,
+                value: formatted(score, objective, &default_style),
+            }
+        };
+
+        let lines = match slot {
+            Slot::Sidebar => {
+                entries.into_iter().filter(|(owner, _)| !owner.starts_with('#')).take(SIDEBAR_LINES).map(line).collect()
+            }
+            _ => entries.into_iter().map(line).collect(),
+        };
+        Some((objective, lines))
+    }
+
+    fn objective_in(&self, slot: Slot, me: &str) -> Option<&String> {
+        if slot == Slot::Sidebar
+            && let Some(team) = self.team_of(me)
+            && let Some(slot) = team_slot(team.color)
+            && let Some(objective) = self.displayed[slot].as_ref()
+        {
+            return Some(objective);
+        }
+        self.displayed[slot as usize].as_ref()
+    }
+
+    fn team_of(&self, member: &str) -> Option<&Team> {
+        self.teams.get(self.members.get(member)?)
+    }
+
+    /// A name as PlayerTeam.formatNameForTeam draws it: between the team's prefix and suffix, in
+    /// the team's colour unless that is reset, and as it is off any team.
+    fn team_name(&self, owner: &str, name: FormattedText) -> FormattedText {
+        let Some(team) = self.team_of(owner) else { return name };
+        let mut style = Style::default();
+        if team.color != ChatFormatting::Reset {
+            match TextColor::try_from(team.color) {
+                Ok(color) => style.color = Some(color),
+                Err(_) => style.apply_formatting(&team.color),
+            }
+        }
+        FormattedText::Text(TextComponent {
+            base: BaseComponent { siblings: vec![team.prefix.clone(), name, team.suffix.clone()], style: Box::new(style) },
+            text: String::new(),
+        })
     }
 
     /// The vehicle an entity sits on, by network id.
@@ -380,8 +484,9 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
 
     match packet {
         P::SetObjective(p) => match &p.method {
-            Method::Add { display_name, .. } | Method::Change { display_name, .. } => {
-                hud.objectives.insert(p.objective_name.clone(), Objective { title: display_name.clone() });
+            Method::Add { display_name, number_format, .. } | Method::Change { display_name, number_format, .. } => {
+                let objective = Objective { title: display_name.clone(), number_format: number_format.clone() };
+                hud.objectives.insert(p.objective_name.clone(), objective);
             }
             Method::Remove => {
                 hud.objectives.remove(&p.objective_name);
@@ -396,20 +501,46 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
             }
         },
         P::SetDisplayObjective(p) => {
-            let slot = match p.slot {
-                DisplaySlot::List => Slot::List,
-                DisplaySlot::Sidebar => Slot::Sidebar,
-                DisplaySlot::BelowName => Slot::BelowName,
-                _ => return,
-            };
             /* An empty name is how the server clears a slot. */
-            hud.displayed[slot as usize] = (!p.objective_name.is_empty()).then(|| p.objective_name.clone());
+            hud.displayed[p.slot as usize] = (!p.objective_name.is_empty()).then(|| p.objective_name.clone());
         }
         P::SetScore(p) => {
             /* A VarInt on the wire, which azalea reads unsigned: a negative score is two's complement. */
-            let score = Score { value: p.score as i32, display: p.display.clone() };
+            let score = Score { value: p.score as i32, display: p.display.clone(), number_format: p.number_format.clone() };
             hud.scores.entry(p.owner.clone()).or_default().insert(p.objective_name.clone(), score);
         }
+        P::SetPlayerTeam(p) => match &p.method {
+            TeamMethod::Add((parameters, members)) => {
+                hud.teams.insert(p.name.clone(), Team::from(parameters));
+                for member in members {
+                    hud.members.insert(member.clone(), p.name.clone());
+                }
+            }
+            TeamMethod::Remove => {
+                hud.teams.remove(&p.name);
+                hud.members.retain(|_, team| *team != p.name);
+            }
+            /* A team the client was never told of is left alone, as the client leaves it. */
+            TeamMethod::Change(parameters) => {
+                if let Some(team) = hud.teams.get_mut(&p.name) {
+                    *team = Team::from(parameters);
+                }
+            }
+            TeamMethod::Join(members) => {
+                if hud.teams.contains_key(&p.name) {
+                    for member in members {
+                        hud.members.insert(member.clone(), p.name.clone());
+                    }
+                }
+            }
+            TeamMethod::Leave(members) => {
+                for member in members {
+                    if hud.members.get(member) == Some(&p.name) {
+                        hud.members.remove(member);
+                    }
+                }
+            }
+        },
         P::ResetScore(p) => match &p.objective_name {
             Some(objective) => {
                 if let Some(scores) = hud.scores.get_mut(&p.owner) {
@@ -532,6 +663,40 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
     }
 }
 
+/// The sidebar slot a team colour names, as DisplaySlot.teamColorToSlot does: none for a
+/// formatting such as bold or reset, which is no colour.
+fn team_slot(color: ChatFormatting) -> Option<usize> {
+    (!color.is_format()).then(|| FIRST_TEAM_SLOT + color as usize)
+}
+
+/// The score column as PlayerScoreEntry.formatValue draws it.
+fn formatted(score: &Score, objective: &Objective, default_style: &Style) -> FormattedText {
+    match score.number_format.as_ref().or(objective.number_format.as_ref()) {
+        Some(NumberFormat::Blank) => FormattedText::from(String::new()),
+        Some(NumberFormat::Fixed { value }) => value.clone(),
+        Some(NumberFormat::Styled { style }) => styled(score.value, &nbt_style(style)),
+        None => styled(score.value, default_style),
+    }
+}
+
+fn styled(value: i32, style: &Style) -> FormattedText {
+    FormattedText::Text(TextComponent { base: BaseComponent::new().with_style(style.clone()), text: value.to_string() })
+}
+
+/// A style as a styled number format carries it, which is network NBT: the colour and the font by
+/// name, and the flags as bytes. Nothing at all is the empty style.
+fn nbt_style(nbt: &simdnbt::owned::Nbt) -> Style {
+    let flag = |name| nbt.byte(name).map(|flag| flag != 0);
+    Style::default()
+        .color(nbt.string("color").and_then(|color| TextColor::parse(&color.to_str())))
+        .bold(flag("bold"))
+        .italic(flag("italic"))
+        .underlined(flag("underlined"))
+        .strikethrough(flag("strikethrough"))
+        .obfuscated(flag("obfuscated"))
+        .font(nbt.string("font").map(|font| font.to_str().into_owned()))
+}
+
 fn tracked(client: &azalea::Client, at: BlockPos, kind: BlockEntityKind, data: &simdnbt::owned::Nbt) -> Tracked {
     let block = client.world().read().get_block_state(at).map(|state| BlockKind::from(state).to_str().to_owned());
     Tracked { kind: kind.to_str().to_owned(), block, data: serde_json::to_value(data).unwrap_or_default() }
@@ -556,5 +721,245 @@ fn dialog(bot: &Bot, dialog: &Holder<azalea::registry::data::Dialog, simdnbt::ow
                 entry.resolve(registries).and_then(|(_, nbt)| serde_json::to_value(nbt).ok())
             })
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use azalea::FormattedText;
+    use azalea::buf::AzBuf;
+    use azalea::core::objectives::ObjectiveCriteria;
+    use azalea::protocol::packets::game::c_set_display_objective::DisplaySlot;
+    use azalea::protocol::packets::game::c_set_objective::Method;
+    use azalea::protocol::packets::game::c_set_player_team::{CollisionRule, Method as TeamMethod, NameTagVisibility, Parameters};
+    use azalea::protocol::packets::game::{
+        ClientboundGamePacket, ClientboundSetDisplayObjective, ClientboundSetObjective, ClientboundSetPlayerTeam,
+        ClientboundSetScore,
+    };
+    use azalea_chat::numbers::NumberFormat;
+    use azalea_chat::style::{ChatFormatting, TextColor};
+    use serde_json::json;
+
+    use super::{Hud, Slot, keep, nbt_style};
+    use crate::text::component;
+
+    /// A set-objective packet as 26.1.2 writes it: the name, the method as a byte, the title as a
+    /// string tag, the criteria, then the number format behind a presence boolean.
+    fn set_objective(method: u8, number_format: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![1, b'q', method, 0x08, 0, 5];
+        bytes.extend_from_slice(b"Quest");
+        bytes.push(0);
+        bytes.extend_from_slice(number_format);
+        bytes
+    }
+
+    fn read_objective(bytes: &[u8]) -> ClientboundSetObjective {
+        let mut buf = Cursor::new(bytes);
+        let packet = ClientboundSetObjective::azalea_read(&mut buf).unwrap();
+        assert_eq!(buf.position(), bytes.len() as u64, "every byte of the packet is read");
+        packet
+    }
+
+    #[test]
+    fn an_objective_without_a_number_format_sends_the_presence_boolean_alone() {
+        let packet = read_objective(&set_objective(2, &[0]));
+        assert!(matches!(packet.method, Method::Change { number_format: None, .. }));
+    }
+
+    #[test]
+    fn a_fixed_number_format_follows_its_presence_boolean_and_kind() {
+        let packet = read_objective(&set_objective(0, &[1, 2, 0x08, 0, 3, b'5', b'0', b'g']));
+        let Method::Add { number_format, .. } = packet.method else { panic!("not an add") };
+        assert_eq!(number_format, Some(NumberFormat::Fixed { value: FormattedText::from("50g") }));
+    }
+
+    /// The style is network NBT, whose root compound carries no name.
+    #[test]
+    fn a_styled_number_format_carries_its_style_as_unnamed_nbt() {
+        let mut nbt = vec![0x0A, 0x08, 0, 5];
+        nbt.extend_from_slice(b"color");
+        nbt.extend_from_slice(&[0, 3, b'r', b'e', b'd', 0]);
+        let mut number_format = vec![1, 1];
+        number_format.extend_from_slice(&nbt);
+
+        let packet = read_objective(&set_objective(0, &number_format));
+        let Method::Add { number_format: Some(NumberFormat::Styled { style }), .. } = packet.method else {
+            panic!("not styled")
+        };
+        assert_eq!(nbt_style(&style).color, TextColor::try_from(ChatFormatting::Red).ok());
+        assert_eq!(nbt_style(&simdnbt::owned::Nbt::None), azalea_chat::style::Style::default());
+    }
+
+    fn apply(hud: &mut Hud, packets: Vec<ClientboundGamePacket>) {
+        for packet in packets {
+            keep(hud, &packet, 0);
+        }
+    }
+
+    fn objective(name: &str, number_format: Option<NumberFormat>) -> ClientboundGamePacket {
+        ClientboundGamePacket::SetObjective(ClientboundSetObjective {
+            objective_name: name.into(),
+            method: Method::Add { display_name: FormattedText::from(name), render_type: ObjectiveCriteria::Integer, number_format },
+        })
+    }
+
+    fn display(slot: DisplaySlot, objective: &str) -> ClientboundGamePacket {
+        ClientboundGamePacket::SetDisplayObjective(ClientboundSetDisplayObjective { slot, objective_name: objective.into() })
+    }
+
+    fn score(owner: &str, objective: &str, value: i32) -> ClientboundGamePacket {
+        ClientboundGamePacket::SetScore(ClientboundSetScore {
+            owner: owner.into(),
+            objective_name: objective.into(),
+            score: value as u32,
+            display: None,
+            number_format: None,
+        })
+    }
+
+    fn parameters(prefix: &str, suffix: &str, color: ChatFormatting) -> Parameters {
+        Parameters {
+            display_name: FormattedText::default(),
+            options: 0,
+            nametag_visibility: NameTagVisibility::Always,
+            collision_rule: CollisionRule::Always,
+            color,
+            player_prefix: FormattedText::from(prefix),
+            player_suffix: FormattedText::from(suffix),
+        }
+    }
+
+    fn team(name: &str, method: TeamMethod) -> ClientboundGamePacket {
+        ClientboundGamePacket::SetPlayerTeam(ClientboundSetPlayerTeam { name: name.into(), method })
+    }
+
+    fn quest_log() -> Hud {
+        let mut hud = Hud::default();
+        apply(&mut hud, vec![
+            objective("lines", Some(NumberFormat::Blank)),
+            display(DisplaySlot::Sidebar, "lines"),
+            team("l3", TeamMethod::Add((parameters("Harvest wheat", "3/10", ChatFormatting::Reset), vec!["§7".into()]))),
+            score("§7", "lines", 3),
+            team("l2", TeamMethod::Add((parameters("", "", ChatFormatting::Gray), vec!["§8".into()]))),
+            score("§8", "lines", 2),
+            team("l1", TeamMethod::Add((parameters("» ", "", ChatFormatting::Reset), vec!["§9".into()]))),
+            ClientboundGamePacket::SetScore(ClientboundSetScore {
+                owner: "§9".into(),
+                objective_name: "lines".into(),
+                score: 1,
+                display: Some(FormattedText::from("Reward")),
+                number_format: Some(NumberFormat::Fixed { value: FormattedText::from("50g") }),
+            }),
+            score("#hidden", "lines", 9),
+        ]);
+        hud
+    }
+
+    #[test]
+    fn a_sidebar_draws_each_name_in_its_team_and_the_score_as_the_format_says() {
+        let hud = quest_log();
+        let (objective, lines) = hud.board(Slot::Sidebar, "me").unwrap();
+
+        assert_eq!(objective.title.to_string(), "lines");
+        let drawn: Vec<(String, i32, String)> =
+            lines.iter().map(|line| (line.name.to_string(), line.score, line.value.to_string())).collect();
+        assert_eq!(drawn, vec![
+            ("Harvest wheat§73/10".into(), 3, "".into()),
+            ("§8".into(), 2, "".into()),
+            ("» Reward".into(), 1, "50g".into()),
+        ]);
+        assert_eq!(component(&lines[1].name), json!({"text": "", "color": "gray", "extra": ["", "§8", ""]}));
+        assert_eq!(component(&lines[0].value), json!(""));
+    }
+
+    #[test]
+    fn the_list_and_below_name_slots_draw_every_owner_bare_with_the_slots_own_style() {
+        let mut hud = quest_log();
+        apply(&mut hud, vec![objective("stats", None), display(DisplaySlot::List, "stats"), score("#hidden", "stats", 9)]);
+        apply(&mut hud, vec![display(DisplaySlot::BelowName, "lines"), score("Steve", "lines", 4)]);
+
+        let (_, lines) = hud.board(Slot::List, "me").unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(component(&lines[0].name), json!("#hidden"));
+        assert_eq!(component(&lines[0].value), json!({"text": "9", "color": "yellow"}));
+
+        let (_, lines) = hud.board(Slot::BelowName, "me").unwrap();
+        let names: Vec<String> = lines.iter().map(|line| line.name.to_string()).collect();
+        assert_eq!(names, vec!["#hidden", "Steve", "§7", "§8", "Reward"]);
+        assert_eq!(component(&lines[1].name), json!("Steve"));
+    }
+
+    #[test]
+    fn a_sidebar_stops_at_fifteen_lines_after_leaving_out_the_hidden() {
+        let mut hud = Hud::default();
+        apply(&mut hud, vec![objective("many", None), display(DisplaySlot::Sidebar, "many"), score("#top", "many", 99)]);
+        apply(&mut hud, (0..16).map(|n| score(&format!("line{n:02}"), "many", n)).collect());
+
+        let (_, lines) = hud.board(Slot::Sidebar, "me").unwrap();
+        assert_eq!(lines.len(), 15);
+        assert_eq!(lines[0].name.to_string(), "line15");
+        assert_eq!(component(&lines[0].value), json!({"text": "15", "color": "red"}));
+        assert_eq!(lines[14].name.to_string(), "line01");
+    }
+
+    #[test]
+    fn the_sidebar_is_the_one_the_players_team_colour_names_when_that_slot_is_filled() {
+        let mut hud = quest_log();
+        apply(&mut hud, vec![
+            objective("red", None),
+            display(DisplaySlot::TeamRed, "red"),
+            team("reds", TeamMethod::Add((parameters("", "", ChatFormatting::Red), vec!["me".into()]))),
+            team("bold", TeamMethod::Add((parameters("", "", ChatFormatting::Bold), vec!["other".into()]))),
+        ]);
+
+        assert_eq!(hud.board(Slot::Sidebar, "me").unwrap().0.title.to_string(), "red");
+        assert_eq!(hud.board(Slot::Sidebar, "other").unwrap().0.title.to_string(), "lines");
+        assert_eq!(hud.board(Slot::Sidebar, "nobody").unwrap().0.title.to_string(), "lines");
+
+        apply(&mut hud, vec![display(DisplaySlot::TeamRed, "")]);
+        assert_eq!(hud.board(Slot::Sidebar, "me").unwrap().0.title.to_string(), "lines");
+    }
+
+    #[test]
+    fn membership_follows_the_teams_own_rules() {
+        let mut hud = quest_log();
+
+        /* Leaving a team the entry is not on changes nothing; joining another moves it. */
+        apply(&mut hud, vec![team("l2", TeamMethod::Leave(vec!["§7".into()]))]);
+        assert_eq!(hud.board(Slot::Sidebar, "me").unwrap().1[0].name.to_string(), "Harvest wheat§73/10");
+        apply(&mut hud, vec![team("l2", TeamMethod::Join(vec!["§7".into()]))]);
+        assert_eq!(hud.board(Slot::Sidebar, "me").unwrap().1[0].name.to_string(), "§7");
+        apply(&mut hud, vec![team("l2", TeamMethod::Leave(vec!["§7".into()]))]);
+        assert_eq!(component(&hud.board(Slot::Sidebar, "me").unwrap().1[0].name), json!("§7"));
+
+        /* A change keeps the members; a removal drops them with the team. */
+        apply(&mut hud, vec![team("l1", TeamMethod::Change(parameters("- ", "", ChatFormatting::Gold)))]);
+        assert_eq!(hud.board(Slot::Sidebar, "me").unwrap().1[2].name.to_string(), "- Reward");
+        apply(&mut hud, vec![team("l1", TeamMethod::Remove)]);
+        assert_eq!(hud.board(Slot::Sidebar, "me").unwrap().1[2].name.to_string(), "Reward");
+
+        /* A team the client was never told of takes no members. */
+        apply(&mut hud, vec![team("ghost", TeamMethod::Join(vec!["§9".into()]))]);
+        assert_eq!(hud.board(Slot::Sidebar, "me").unwrap().1[2].name.to_string(), "Reward");
+    }
+
+    /// The colour is the game's ordinal, which numbers bold 17 and strikethrough 18.
+    #[test]
+    fn a_team_coloured_bold_on_the_wire_draws_its_names_bold() {
+        let mut bytes = vec![1, b'b', 0, 0x08, 0, 0, 0, 0, 0, 17, 0x08, 0, 0, 0x08, 0, 0, 1, 3];
+        bytes.extend_from_slice("§7".as_bytes());
+        let mut buf = Cursor::new(bytes.as_slice());
+        let packet = ClientboundSetPlayerTeam::azalea_read(&mut buf).unwrap();
+        assert_eq!(buf.position(), bytes.len() as u64, "every byte of the packet is read");
+        let TeamMethod::Add((parameters, _)) = &packet.method else { panic!("not an add") };
+        assert_eq!(parameters.color, ChatFormatting::Bold);
+
+        let mut hud = quest_log();
+        apply(&mut hud, vec![ClientboundGamePacket::SetPlayerTeam(packet)]);
+        let name = component(&hud.board(Slot::Sidebar, "me").unwrap().1[0].name);
+        assert_eq!(name["bold"], json!(true));
+        assert_eq!(name.get("strikethrough"), None);
     }
 }

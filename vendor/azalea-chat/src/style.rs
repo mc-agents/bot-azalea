@@ -117,8 +117,11 @@ pub enum ChatFormatting {
     Yellow,
     White,
     Obfuscated,
-    Strikethrough,
+    // mc-agents: the team packet sends this enum by ordinal, and the game orders it by legacy code
+    // (k, l, m, n, o, r), so bold is 17 and strikethrough 18. The two were the other way round
+    // here, and a team coloured bold arrived as strikethrough.
     Bold,
+    Strikethrough,
     Underline,
     Italic,
     Reset,
@@ -143,8 +146,8 @@ impl ChatFormatting {
         ChatFormatting::Yellow,
         ChatFormatting::White,
         ChatFormatting::Obfuscated,
-        ChatFormatting::Strikethrough,
         ChatFormatting::Bold,
+        ChatFormatting::Strikethrough,
         ChatFormatting::Underline,
         ChatFormatting::Italic,
         ChatFormatting::Reset,

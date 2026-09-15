@@ -21,6 +21,7 @@ use super::{Tool, alive, in_world, stacks, tick};
 use crate::bot::Bot;
 use crate::menus::Menus;
 use crate::calls::{Answer, Failure, Outcome};
+use crate::text::Line;
 
 /// A player inventory is 36 slots wherever it is attached.
 const PLAYER_INVENTORY_SLOTS: usize = 36;
@@ -57,6 +58,7 @@ pub fn received(bot: &Bot, client: &Client, packet: &ClientboundGamePacket) {
     match packet {
         ClientboundGamePacket::OpenScreen(screen) => {
             *bot.opened.borrow_mut() = Some((screen.container_id, screen.title.clone()));
+            bot.opens.set(bot.opens.get() + 1);
             bot.contents.send_replace(None);
         }
         ClientboundGamePacket::ContainerClose(close) => {
@@ -225,11 +227,19 @@ fn out_of_range(slot: i64, menu: &Menu) -> Failure {
 /// a +1 opening that screen again -- and then never sends the one clicked. That window is the answer,
 /// and it comes back as what `window` holds in a click's DTO; so does the server closing the window.
 /// `None` is an answer in the window that was clicked.
+///
+/// A plugin that redraws a menu's title opens it again under the same id, and the contents that
+/// follow are a new window's however the id reads: azalea has made a new menu for it, as the client
+/// does. Paper then sends the window once more with what it holds, and the answer waits a tick for
+/// that to land, so what a tool reads after is the server's window and not the plugin's first draw.
+/// A redraw the plugin schedules for a later tick, or one a timer of its own sends while the click
+/// is in flight, is still taken for the click's answer, or missed.
 pub async fn click(bot: &Bot, window: i32, slot: i16, button: u8, click_type: ClickType) -> Result<Option<Value>, Failure> {
     let mut contents = bot.contents.subscribe();
     contents.borrow_and_update();
     let mut closed = bot.closed.subscribe();
     closed.borrow_and_update();
+    let opens = bot.opens.get();
 
     let answered = alive(bot, |game| {
         let client = &game.client;
@@ -262,18 +272,24 @@ pub async fn click(bot: &Bot, window: i32, slot: i16, button: u8, click_type: Cl
                         return None;
                     }
                     let arrived = *contents.borrow_and_update();
-                    if arrived == Some(window) {
+                    let opened = bot.opened.borrow().clone();
+                    let redrawn = arrived == Some(window)
+                        && bot.opens.get() != opens
+                        && opened.as_ref().is_some_and(|(id, _)| *id == window);
+                    if arrived == Some(window) && !redrawn {
                         return None;
                     }
-                    let opened = bot.opened.borrow().clone();
-                    if let (Some(id), Some((opened, title))) = (arrived, opened) {
-                        if id == opened {
-                            return Some(json!({
-                                "closed": false,
-                                "title": title.to_string(),
-                                "titleComponent": component(&title),
-                            }));
+                    if let (Some(id), Some((opened, title))) = (arrived, opened)
+                        && id == opened
+                    {
+                        if redrawn {
+                            tick(bot).await;
                         }
+                        return Some(json!({
+                            "closed": false,
+                            "title": title.to_string(),
+                            "titleComponent": component(&title),
+                        }));
                     }
                 }
                 changed = closed.changed() => {
@@ -437,7 +453,7 @@ pub const WAIT_FOR_WINDOW: Tool = Tool {
             let window = loop {
                 let found = in_world(&bot, |game| {
                     filled(&bot, &game.client)
-                        .filter(|window| pattern.as_ref().is_none_or(|pattern| pattern.is_match(&window.title.to_string())))
+                        .filter(|window| pattern.as_ref().is_none_or(|pattern| Line::of(&window.title).matches(pattern)))
                         .map(|window| describe(&window))
                 })?;
                 if found.is_some() || started.elapsed().as_millis() >= timeout_ms as u128 {

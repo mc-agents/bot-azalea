@@ -10,6 +10,7 @@ use crate::config::Config;
 use crate::feeds::Runs;
 use crate::game::{Departing, Game};
 use crate::link::frame;
+use crate::text::Line;
 
 pub const KIND: &str = "azalea";
 pub const MINECRAFT_VERSION: &str = "26.1.2";
@@ -34,9 +35,9 @@ pub struct Bot {
     pub runs: RefCell<Runs>,
     /// Every chat line as text, for a call waiting on the one thing a proxy only says in chat.
     pub heard: broadcast::Sender<String>,
-    /// The action bar, the titles and the sounds as the text a pattern is matched against, by feed,
-    /// for a press that has to land on the tick a line arrives rather than a round trip later.
-    pub shown: broadcast::Sender<(&'static str, String)>,
+    /// The action bar, the titles and the sounds in the wordings a pattern is matched against, by
+    /// feed, for a press that has to land on the tick a line arrives rather than a round trip later.
+    pub shown: broadcast::Sender<(&'static str, Line)>,
     /// The chat lines still on screen, newest first, kept as components so a click event in one can
     /// be pressed. Bounded like the client's own history: what is off the screen is not clickable for
     /// a player either.
@@ -49,6 +50,9 @@ pub struct Bot {
     /// The window the server last opened and its title, from the packet rather than the menu, so a
     /// click that the server answered with a new window can say which.
     pub opened: RefCell<Option<(i32, FormattedText)>>,
+    /// How many windows the server has opened, so a click can tell a window redrawn under the id
+    /// it clicked from the one it clicked.
+    pub opens: Cell<u64>,
     /// The window the server last closed.
     pub closed: watch::Sender<Option<i32>>,
     /// What the last status said that a move can change, and the tick it went out on.
@@ -74,6 +78,7 @@ impl Bot {
             ticks: watch::channel(0).0,
             contents: watch::channel(None).0,
             opened: RefCell::new(None),
+            opens: Cell::new(0),
             closed: watch::channel(None).0,
             reported: RefCell::new(None),
         }

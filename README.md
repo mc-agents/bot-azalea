@@ -58,7 +58,10 @@ docker run --rm -e MCP_SERVER_HOST=host.docker.internal -e BOT_NAME=a1 bot-azale
 - **`vendor/azalea-chat`.** A keybind, selector, score, nbt or object component made azalea fail
   the decode of the whole packet, so the chat line it was in never reached the bot and all that was
   left was a log line. Those now stand in as text naming what could not be resolved. A click event
-  that shows a dialog keeps the dialog, which azalea dropped. The rest of the crate is as released.
+  that shows a dialog keeps the dialog, which azalea dropped. A styled number format's style is
+  read as the unnamed NBT the network sends rather than as a named compound, and a team's colour
+  with bold and strikethrough in the order the game numbers them, which azalea had swapped. The
+  rest of the crate is as released.
 - **The attack packet is written by the bot.** azalea writes the target's id as a four-byte int
   where the game reads a VarInt, and the server drops the connection of a bot that swings. So is
   the interact packet: azalea sends the click as a position in the world, where the game sends it
@@ -68,7 +71,8 @@ docker run --rm -e MCP_SERVER_HOST=host.docker.internal -e BOT_NAME=a1 bot-azale
   a state id the server never holds, which makes it answer with the whole window, and the tool reads
   that. The state id and cursor azalea drops from those answers are put back by the bot.
 - **`vendor/azalea-protocol`.** azalea decodes the cooldown packet as an item where 26.x sends a
-  cooldown group, so every cooldown a server started arrived as nonsense. One struct is changed;
+  cooldown group, so every cooldown a server started arrived as nonsense, and reads an objective's
+  number format without the presence boolean 26.x writes in front of it. A few structs are changed;
   `vendor/azalea-protocol/PATCHED.md` says which and when the directory can go.
 - **No automatic respawn or reconnect.** A server under test may be checking what happens on death
   or on a kick, and a bot that got up or rejoined by itself would hide exactly that.

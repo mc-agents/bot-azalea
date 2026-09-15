@@ -25,8 +25,11 @@ impl AzBuf for NumberFormat {
         let kind = NumberFormatKind::azalea_read(buf)?;
         match kind {
             NumberFormatKind::Blank => Ok(NumberFormat::Blank),
+            // mc-agents: the style is written as network NBT, whose root compound has no name, and
+            // reading it as a named one took the first field's tag and name for a name length.
+            // Read the way `azalea_write` below writes it.
             NumberFormatKind::Styled => Ok(NumberFormat::Styled {
-                style: simdnbt::owned::read(buf)?,
+                style: Nbt::azalea_read(buf)?,
             }),
             NumberFormatKind::Fixed => Ok(NumberFormat::Fixed {
                 value: FormattedText::azalea_read(buf)?,
