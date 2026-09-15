@@ -46,6 +46,8 @@ pub struct Bot {
     /// contents have not arrived. Sent on every arrival, equal or not, because an arrival is what a
     /// click waits for.
     pub contents: watch::Sender<Option<i32>>,
+    /// What the last status said that a move can change, and the tick it went out on.
+    pub reported: RefCell<Option<(String, u64)>>,
 }
 
 impl Bot {
@@ -66,6 +68,7 @@ impl Bot {
             said: RefCell::new(VecDeque::new()),
             ticks: watch::channel(0).0,
             contents: watch::channel(None).0,
+            reported: RefCell::new(None),
         }
     }
 

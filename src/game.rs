@@ -102,7 +102,40 @@ impl Game {
             status["gameMode"] = json!(crate::tools::game_mode(
                 self.client.get_component::<azalea::local_player::LocalGameMode>().map(|mode| mode.current)
             ));
+            if let Some((_, dimension)) = self.hud.borrow().dimension() {
+                status["dimension"] = json!(dimension.to_string());
+            }
         }
+    }
+}
+
+/// Send the status again when what a caller reads from it has changed, and every few seconds anyway.
+///
+/// A status went out on a join, a death and a disconnect only. A move between servers or
+/// dimensions behind a proxy changes none of those, so get-bot-status went on naming the server and
+/// the position the bot had left.
+fn notice_world(bot: &Rc<Bot>, generation: u64) {
+    /* Five seconds of client ticks. */
+    const REFRESH_TICKS: u64 = 100;
+
+    let seen = {
+        let game = bot.game.borrow();
+        let Some(game) = game.as_ref().filter(|game| game.generation == generation && game.spawned()) else {
+            *bot.reported.borrow_mut() = None;
+            return;
+        };
+        let mut status = json!({});
+        game.describe(&mut status);
+        format!("{}|{}|{}", status["dimension"], status["gameMode"], status["dead"])
+    };
+    let now = *bot.ticks.borrow();
+    let due = match bot.reported.borrow().as_ref() {
+        Some((reported, at)) => *reported != seen || now.saturating_sub(*at) >= REFRESH_TICKS,
+        None => true,
+    };
+    if due {
+        *bot.reported.borrow_mut() = Some((seen, now));
+        bot.status("ready", None);
     }
 }
 
@@ -298,6 +331,7 @@ async fn pump(
                 tick already.
                 */
                 feeds::flush(&bot);
+                notice_world(&bot, generation);
             }
             Event::Death(kill) => {
                 if let Some(game) = bot.game.borrow().as_ref().filter(|game| game.generation == generation) {
