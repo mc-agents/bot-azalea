@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use super::args::{integer, text};
 use super::windows::{OFF_HAND, click};
-use super::{Tool, alive, game_mode, in_world, stacks};
+use super::{Tool, alive, game_mode, in_world, stacks, tick};
 use crate::bot::Bot;
 use crate::calls::{Answer, Failure};
 use crate::game::Game;
@@ -127,9 +127,15 @@ pub const EQUIP_ITEM: Tool = Tool {
             })??;
 
             match destination.as_str() {
-                /* Already on the hotbar is a held-item change, which is what a person does with a number key. */
+                /*
+                Already on the hotbar is a held-item change, which is what a person does with a number
+                key. azalea sends the selection on its next tick, not on the call, while a use-held-item
+                right behind this writes its packet at once; answered before that tick, the use reached
+                the server first and used whatever hand was selected before.
+                */
                 "hand" if (HOTBAR_START..=HOTBAR_END).contains(&source) => {
                     alive(&bot, |game| game.client.set_selected_hotbar_slot((source - HOTBAR_START) as u8))?;
+                    tick(&bot).await;
                 }
                 "hand" => {
                     click(&bot, INVENTORY_WINDOW, source as i16, selected, ClickType::Swap).await?;
