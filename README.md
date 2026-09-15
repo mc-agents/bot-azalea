@@ -87,4 +87,8 @@ docker run --rm -e MCP_SERVER_HOST=host.docker.internal -e BOT_NAME=a1 bot-azale
   entities are not yet, and nothing reads them.
 - **Commands go unsigned.** azalea signs chat and nothing else, so a server in online mode that
   enforces secure profiles will not run a command with a signed argument, such as `/msg`.
+- **A click the server never answers is read as answered.** `click-slot` and a `click` step of
+  `run-inputs` wait two seconds for the window to come back and then read what there is, where
+  `bot-fabric` stops with `CLICK_UNCONFIRMED`. A `press` step ends up to three ticks after the key
+  came up, once azalea has told the server, and `endedTick` reports that.
 - **A disconnected client stays in the ECS.** Joining again and again in one process grows it.

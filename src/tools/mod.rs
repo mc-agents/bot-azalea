@@ -16,6 +16,7 @@ mod options;
 mod player;
 mod position;
 mod recipes;
+mod sequence;
 mod stacks;
 mod text;
 mod trades;
@@ -96,6 +97,7 @@ const TOOLS: &[Tool] = &[
     hands::ACTIVATE_BLOCK,
     hands::USE_HELD_ITEM,
     input::PRESS_INPUT,
+    sequence::RUN_INPUTS,
     dialogs::PRESS_DIALOG_BUTTON,
     dialogs::SET_DIALOG_INPUT,
     editors::TYPE_TEXT,

@@ -167,7 +167,7 @@ pub const SWITCH_SERVER: Tool = Tool {
 
 const SETTLE_TICKS: u64 = 20;
 
-fn slashed(command: &str) -> String {
+pub(super) fn slashed(command: &str) -> String {
     if command.starts_with('/') { command.to_owned() } else { format!("/{command}") }
 }
 

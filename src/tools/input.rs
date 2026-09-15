@@ -24,10 +24,11 @@ use super::args::{integer, text};
 use super::entities::{aimed, attack, interact};
 use super::windows::swing;
 use super::{Tool, alive, tick};
+use crate::bot::Bot;
 use crate::calls::{Answer, Failure};
 use crate::text::Line;
 
-const TICK_MS: u64 = 50;
+pub(super) const TICK_MS: u64 = 50;
 
 /// What the client waits between uses while the button is held, and so between uses here.
 const USE_DELAY_TICKS: u32 = 4;
@@ -69,11 +70,27 @@ impl Key {
             _ => return Err(Failure::bad_args(format!("unknown key {name}"))),
         })
     }
+
+    fn name(self) -> &'static str {
+        match self {
+            Key::Jump => "jump",
+            Key::Sneak => "sneak",
+            Key::Sprint => "sprint",
+            Key::Use => "use",
+            Key::Attack => "attack",
+            Key::Hotbar => "hotbar",
+            Key::ScrollUp => "scroll-up",
+            Key::ScrollDown => "scroll-down",
+            Key::SwapOffhand => "swap-offhand",
+            Key::Drop => "drop",
+        }
+    }
 }
 
-struct Watch {
-    feed: String,
-    source: String,
+/// A line on one of the shown feeds that a press waits on, or stops at.
+pub(super) struct Watch {
+    pub(super) feed: String,
+    pub(super) source: String,
     pattern: Regex,
 }
 
@@ -82,18 +99,61 @@ impl Watch {
         if given.is_null() {
             return Ok(None);
         }
+        Watch::parse(given).map(Some)
+    }
+
+    pub(super) fn parse(given: &Value) -> Result<Watch, Failure> {
         let source = text(given, "pattern")?.to_owned();
         let pattern = Regex::new(&source)
             .map_err(|invalid| Failure::refused("BAD_PATTERN", format!("\"{source}\" is not a valid regular expression: {invalid}")))?;
-        Ok(Some(Watch { feed: text(given, "feed")?.to_owned(), source, pattern }))
+        Ok(Watch { feed: text(given, "feed")?.to_owned(), source, pattern })
     }
 
-    fn matches(&self, kind: &str, line: &Line) -> bool {
+    pub(super) fn matches(&self, kind: &str, line: &Line) -> bool {
         self.feed == kind && line.matches(&self.pattern)
     }
 
-    fn describe(&self, matched: Option<&str>) -> Value {
+    pub(super) fn describe(&self, matched: Option<&str>) -> Value {
         json!({"feed": self.feed, "pattern": self.source, "matched": matched})
+    }
+}
+
+/// press-input's arguments as the wire gives them, checked.
+pub(super) struct PressArgs {
+    key: Key,
+    pub(super) slot: Option<u8>,
+    pub(super) hold: u32,
+    repeat: u32,
+    interval: u32,
+    after: Option<Watch>,
+    until: Option<Watch>,
+    timeout: u64,
+}
+
+impl PressArgs {
+    pub(super) fn parse(args: &Value) -> Result<PressArgs, Failure> {
+        let key = Key::of(text(args, "key")?)?;
+        let slot = match &args["slot"] {
+            Value::Null => None,
+            _ => Some(integer(args, "slot", 0)? as u8),
+        };
+        if key == Key::Hotbar && slot.is_none() {
+            return Err(Failure::refused("NO_SLOT", "hotbar needs slot, 0 being the leftmost hotbar slot."));
+        }
+        Ok(PressArgs {
+            key,
+            slot: if key == Key::Hotbar { slot } else { None },
+            hold: integer(args, "holdTicks", 1)? as u32,
+            repeat: integer(args, "repeat", 1)? as u32,
+            interval: integer(args, "intervalTicks", 1)? as u32,
+            after: Watch::of(&args["after"])?,
+            until: Watch::of(&args["until"])?,
+            timeout: integer(args, "timeoutMs", 10_000)? as u64,
+        })
+    }
+
+    pub(super) fn key(&self) -> &'static str {
+        self.key.name()
     }
 }
 
@@ -114,29 +174,9 @@ pub const PRESS_INPUT: Tool = Tool {
     name: "press-input",
     run: |bot, args| {
         Box::pin(async move {
-            let key = Key::of(text(&args, "key")?)?;
-            let slot = match &args["slot"] {
-                Value::Null => None,
-                _ => Some(integer(&args, "slot", 0)? as u8),
-            };
-            let hold = integer(&args, "holdTicks", 1)? as u32;
-            let repeat = integer(&args, "repeat", 1)? as u32;
-            let interval = integer(&args, "intervalTicks", 1)? as u32;
-            let after = Watch::of(&args["after"])?;
-            let until = Watch::of(&args["until"])?;
-            let timeout = integer(&args, "timeoutMs", 10_000)? as u64;
-
-            if key == Key::Hotbar && slot.is_none() {
-                return Err(Failure::refused("NO_SLOT", "hotbar needs slot, 0 being the leftmost hotbar slot."));
-            }
-            let slot = if key == Key::Hotbar { slot } else { None };
-
-            let client = alive(&bot, |game| game.client.clone())?;
-            /* A dialog is a screen on the other kind of bot, and keys go to it there too. */
-            let dialog = alive(&bot, |game| game.hud.borrow().dialog.is_some())?;
-            if dialog || client.get_component::<Inventory>().is_some_and(|inventory| inventory.container_menu.is_some()) {
-                return Err(Failure::refused("WINDOW_OPEN", "a window is open, and keys go to it rather than to the game; close-window first."));
-            }
+            let args = PressArgs::parse(&args)?;
+            game_takes_keys(&bot)?;
+            let (repeat, hold, interval, timeout) = (args.repeat, args.hold, args.interval, args.timeout);
             let sequence = (u64::from(repeat) * u64::from(hold) + u64::from(repeat - 1) * u64::from(interval)) * TICK_MS;
             if sequence > timeout {
                 return Err(Failure::refused(
@@ -145,127 +185,148 @@ pub const PRESS_INPUT: Tool = Tool {
                 ));
             }
 
-            let mut lines = bot.shown.subscribe();
-            let mut clock = bot.ticks.subscribe();
-            clock.borrow_and_update();
-
-            let started = Instant::now();
             let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout);
-            let mut keys = Keys::new(client, key, slot.unwrap_or_default());
-            /* The first press goes out on the next tick, the way the other kind of bot's does. */
-            let mut phase = if after.is_some() { Phase::Waiting } else { Phase::Up(1) };
-            let mut presses = 0;
-            let mut waited = 0;
-            let (mut after_matched, mut until_matched) = (None, None);
-            let mut stopped = "done";
-
-            loop {
-                tokio::select! {
-                    line = lines.recv() => {
-                        let (kind, line) = match line {
-                            Ok(line) => line,
-                            Err(RecvError::Lagged(_)) => continue,
-                            Err(RecvError::Closed) => return Err(Failure::not_in_game()),
-                        };
-                        match phase {
-                            Phase::Waiting if after.as_ref().is_some_and(|after| after.matches(kind, &line)) => {
-                                waited = started.elapsed().as_millis() as u64;
-                                after_matched = Some(line.shown);
-                                keys.press();
-                                presses += 1;
-                                phase = Phase::Down(hold);
-                            }
-                            Phase::Down(_) | Phase::Up(_) if until.as_ref().is_some_and(|until| until.matches(kind, &line)) => {
-                                until_matched = Some(line.shown);
-                                stopped = "until";
-                                keys.release();
-                                break;
-                            }
-                            _ => {}
-                        }
-                    }
-                    changed = clock.changed() => {
-                        if changed.is_err() {
-                            return Err(Failure::not_in_game());
-                        }
-                        alive(&bot, |_| ())?;
-                        keys.tick();
-                        phase = match phase {
-                            Phase::Waiting => Phase::Waiting,
-                            /* A tick counts once the server has been told, however long azalea takes to tell it. */
-                            Phase::Down(left) if !keys.arrived() => Phase::Down(left),
-                            Phase::Up(left) if !keys.arrived() => Phase::Up(left),
-                            Phase::Down(left) if left > 1 => Phase::Down(left - 1),
-                            Phase::Down(_) => {
-                                keys.release();
-                                if presses == repeat {
-                                    break;
-                                }
-                                Phase::Up(interval)
-                            }
-                            Phase::Up(left) if left > 1 => Phase::Up(left - 1),
-                            Phase::Up(_) => {
-                                keys.press();
-                                presses += 1;
-                                Phase::Down(hold)
-                            }
-                        };
-                    }
-                    () = tokio::time::sleep_until(deadline) => {
-                        if let (Phase::Waiting, Some(after)) = (&phase, &after) {
-                            return Err(Failure::refused(
-                                "NO_MATCH",
-                                format!(
-                                    "nothing on the {} feed matched /{}/ within {timeout}ms, so {} was never pressed.",
-                                    after.feed,
-                                    after.source,
-                                    text(&args, "key")?
-                                ),
-                            ));
-                        }
-                        keys.release();
-                        stopped = "timeout";
-                        break;
-                    }
-                }
-            }
-
-            /*
-            A break that was on its way when the button came up is caught on the ticks after, and a
-            key let go of is told to the server before the answer, so a press in the next call is a
-            press of its own and not lost in the same input.
-            */
-            for _ in 0..SETTLE_TICKS {
-                if key != Key::Attack && keys.arrived() {
-                    break;
-                }
-                tick(&bot).await;
-                keys.tick();
-            }
-            let selected = alive(&bot, |game| game.client.selected_hotbar_slot())?;
-            let mut after_value = after.as_ref().map_or(Value::Null, |after| after.describe(after_matched.as_deref()));
-            if !after_value.is_null() {
-                after_value["waitedMs"] = json!(waited);
-            }
-
-            Ok(Answer::data(
-                format!("pressed {} {presses} of {repeat} time(s), {stopped}", text(&args, "key")?),
-                json!({
-                    "key": text(&args, "key")?,
-                    "slot": slot,
-                    "presses": presses,
-                    "repeat": repeat,
-                    "holdTicks": hold,
-                    "intervalTicks": interval,
-                    "after": after_value,
-                    "until": until.as_ref().map_or(Value::Null, |until| until.describe(until_matched.as_deref())),
-                    "stopped": stopped,
-                    "selectedSlot": selected,
-                }),
-            ))
+            let key = args.key();
+            let data = press(&bot, args, Some(deadline)).await?;
+            let summary = format!("pressed {key} {} of {repeat} time(s), {}", data["presses"], data["stopped"].as_str().unwrap_or_default());
+            Ok(Answer::data(summary, data))
         })
     },
 };
+
+/// Whether a key would reach the game: a window takes the keys while one is open.
+pub(super) fn game_takes_keys(bot: &Bot) -> Result<(), Failure> {
+    let client = alive(bot, |game| game.client.clone())?;
+    /* A dialog is a screen on the other kind of bot, and keys go to it there too. */
+    let dialog = alive(bot, |game| game.hud.borrow().dialog.is_some())?;
+    if dialog || client.get_component::<Inventory>().is_some_and(|inventory| inventory.container_menu.is_some()) {
+        return Err(Failure::refused("WINDOW_OPEN", "a window is open, and keys go to it rather than to the game; close-window first."));
+    }
+    Ok(())
+}
+
+/// The presses, made and answered as press-input's DTO. The first press goes out on the tick after
+/// the call, and a key let go of is settled with the server before the answer. With no deadline
+/// the presses run until they are done, or until whatever awaits them drops them.
+pub(super) async fn press(bot: &Bot, args: PressArgs, deadline: Option<tokio::time::Instant>) -> Result<Value, Failure> {
+    let PressArgs { key, slot, hold, repeat, interval, after, until, timeout } = args;
+    let client = alive(bot, |game| game.client.clone())?;
+
+    let mut lines = bot.shown.subscribe();
+    let mut clock = bot.ticks.subscribe();
+    clock.borrow_and_update();
+
+    let started = Instant::now();
+    let mut keys = Keys::new(client, key, slot.unwrap_or_default());
+    /* The first press goes out on the next tick, the way the other kind of bot's does. */
+    let mut phase = if after.is_some() { Phase::Waiting } else { Phase::Up(1) };
+    let mut presses = 0;
+    let mut waited = 0;
+    let (mut after_matched, mut until_matched) = (None, None);
+    let mut stopped = "done";
+
+    loop {
+        tokio::select! {
+            line = lines.recv() => {
+                let (kind, line) = match line {
+                    Ok(line) => line,
+                    Err(RecvError::Lagged(_)) => continue,
+                    Err(RecvError::Closed) => return Err(Failure::not_in_game()),
+                };
+                match phase {
+                    Phase::Waiting if after.as_ref().is_some_and(|after| after.matches(kind, &line)) => {
+                        waited = started.elapsed().as_millis() as u64;
+                        after_matched = Some(line.shown);
+                        keys.press();
+                        presses += 1;
+                        phase = Phase::Down(hold);
+                    }
+                    Phase::Down(_) | Phase::Up(_) if until.as_ref().is_some_and(|until| until.matches(kind, &line)) => {
+                        until_matched = Some(line.shown);
+                        stopped = "until";
+                        keys.release();
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            changed = clock.changed() => {
+                if changed.is_err() {
+                    return Err(Failure::not_in_game());
+                }
+                alive(bot, |_| ())?;
+                keys.tick();
+                phase = match phase {
+                    Phase::Waiting => Phase::Waiting,
+                    /* A tick counts once the server has been told, however long azalea takes to tell it. */
+                    Phase::Down(left) if !keys.arrived() => Phase::Down(left),
+                    Phase::Up(left) if !keys.arrived() => Phase::Up(left),
+                    Phase::Down(left) if left > 1 => Phase::Down(left - 1),
+                    Phase::Down(_) => {
+                        keys.release();
+                        if presses == repeat {
+                            break;
+                        }
+                        Phase::Up(interval)
+                    }
+                    Phase::Up(left) if left > 1 => Phase::Up(left - 1),
+                    Phase::Up(_) => {
+                        keys.press();
+                        presses += 1;
+                        Phase::Down(hold)
+                    }
+                };
+            }
+            () = tokio::time::sleep_until(deadline.unwrap_or_else(tokio::time::Instant::now)), if deadline.is_some() => {
+                if let (Phase::Waiting, Some(after)) = (&phase, &after) {
+                    return Err(Failure::refused(
+                        "NO_MATCH",
+                        format!(
+                            "nothing on the {} feed matched /{}/ within {timeout}ms, so {} was never pressed.",
+                            after.feed,
+                            after.source,
+                            key.name()
+                        ),
+                    ));
+                }
+                keys.release();
+                stopped = "timeout";
+                break;
+            }
+        }
+    }
+
+    /*
+    A break that was on its way when the button came up is caught on the ticks after, and a
+    key let go of is told to the server before the answer, so a press in the next call is a
+    press of its own and not lost in the same input.
+    */
+    for _ in 0..SETTLE_TICKS {
+        if key != Key::Attack && keys.arrived() {
+            break;
+        }
+        tick(bot).await;
+        keys.tick();
+    }
+    let selected = alive(bot, |game| game.client.selected_hotbar_slot())?;
+    let mut after_value = after.as_ref().map_or(Value::Null, |after| after.describe(after_matched.as_deref()));
+    if !after_value.is_null() {
+        after_value["waitedMs"] = json!(waited);
+    }
+
+    Ok(json!({
+        "key": key.name(),
+        "slot": slot,
+        "presses": presses,
+        "repeat": repeat,
+        "holdTicks": hold,
+        "intervalTicks": interval,
+        "after": after_value,
+        "until": until.as_ref().map_or(Value::Null, |until| until.describe(until_matched.as_deref())),
+        "stopped": stopped,
+        "selectedSlot": selected,
+    }))
+}
 
 /// The key being pressed, and what letting go of it undoes. Dropped with the call however it ends,
 /// so a key held when a cancel or the deadline wins is not left down for as long as the bot stays.

@@ -807,7 +807,7 @@ dependencies = [
 
 [[package]]
 name = "bot-azalea"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "azalea",
  "azalea-chat",

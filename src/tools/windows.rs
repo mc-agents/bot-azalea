@@ -528,103 +528,126 @@ pub const CLICK_SLOT: Tool = Tool {
     name: "click-slot",
     run: |bot, args| {
         Box::pin(async move {
-            let slot = integer(&args, "slot", -1)?;
             let outside = boolean(&args, "outside", false)?;
-            let button = text(&args, "button")?.to_owned();
-            let shift = boolean(&args, "shift", false)?;
-            let mode = text_or(&args, "mode", "click")?.to_owned();
-            let hotbar = integer(&args, "hotbar", 0)?;
-
-            let window = alive(&bot, |game| require(&game.client))??;
-
             if outside {
+                let slot = integer(&args, "slot", -1)?;
+                let button = text(&args, "button")?.to_owned();
+                let shift = boolean(&args, "shift", false)?;
+                let mode = text_or(&args, "mode", "click")?;
+                let window = alive(&bot, |game| require(&game.client))??;
                 if slot >= 0 || mode != "click" || shift {
                     return Err(Failure::bad_args("a click outside the window is a plain click, and takes no slot, mode or shift"));
                 }
                 return click_outside(&bot, &window, button).await;
             }
-            if slot < 0 {
-                return Err(Failure::bad_args("click-slot needs a slot, or outside for a click outside the window"));
-            }
 
-            if slot < 0 || slot >= window.menu.len() as i64 {
-                return Err(out_of_range(slot, &window.menu));
-            }
-            let (click_type, key) = input(&mode, &button, shift, hotbar)?;
-            let swap = (click_type == ClickType::Swap).then_some(key);
-
-            let before = window.menu.slot(slot as usize).cloned().unwrap_or_default();
-            let swapped_before =
-                swap.map(|index| in_world(&bot, |game| inventory_item(&game.client.component::<Inventory>(), index))).transpose()?;
-
-            let replaced = click(&bot, window.id, slot as i16, key, click_type).await?;
-
-            if let Some(replaced) = replaced {
-                /* The window clicked is gone, and what its slots held is azalea's guess. */
-                let cursor = alive(&bot, |game| game.client.component::<Inventory>().carried.clone())?;
-                return Ok(Answer::data(
-                    "click-slot",
-                    json!({
-                        "slot": slot,
-                        "outside": false,
-                        "button": button,
-                        "shift": shift,
-                        "mode": mode,
-                        "hotbar": if hotbar == 0 { Value::Null } else { json!(hotbar) },
-                        "before": stacks::held(&before),
-                        "after": null,
-                        "cursor": stacks::held(&cursor),
-                        "swapped": null,
-                        "window": replaced,
-                    }),
-                ));
-            }
-
-            let (after, cursor, swapped_after) = alive(&bot, |game| {
-                let client = &game.client;
-                let (after, cursor) = {
-                    let inventory = client.component::<Inventory>();
-                    (inventory.menu().slot(slot as usize).cloned().unwrap_or_default(), inventory.carried.clone())
-                };
-
-                /*
-                The off-hand is in no container window, so the server's answer does not carry it, and
-                what went there is read off the slot instead: a swap that happened left the slot
-                holding what the off-hand had, and the off-hand holding what the slot had.
-                */
-                if swap == Some(OFF_HAND) && swapped_before.as_ref().is_some_and(|had| *had == after && after != before) {
-                    let _ = client.try_query_self::<&mut Inventory, _>(|mut inventory| {
-                        inventory.inventory_menu.as_player_mut().offhand = before.clone();
-                    });
-                }
-                let swapped_after = swap.map(|index| inventory_item(&client.component::<Inventory>(), index));
-                (after, cursor, swapped_after)
-            })?;
-
-            let swapped = match (swapped_before, swapped_after) {
-                (Some(before), Some(after)) => json!({"before": stacks::held(&before), "after": stacks::held(&after)}),
-                _ => Value::Null,
-            };
-
-            Ok(Answer::data(
-                "click-slot",
-                json!({
-                    "slot": slot,
-                    "outside": false,
-                    "button": button,
-                    "shift": shift,
-                    "mode": mode,
-                    "hotbar": if hotbar == 0 { Value::Null } else { json!(hotbar) },
-                    "before": stacks::held(&before),
-                    "after": stacks::held(&after),
-                    "cursor": stacks::held(&cursor),
-                    "swapped": swapped,
-                    "window": null,
-                }),
-            ))
+            let click = ClickArgs::parse(&args)?;
+            Ok(Answer::data("click-slot", click_step(&bot, &click).await?))
         })
     },
 };
+
+/// A click on a slot as click-slot's wire gives it. Whether it is one the window takes is settled
+/// when it is made, in the order the other kind of bot settles it: a step of a sequence is made in
+/// whatever window is open at its turn, and refused then.
+pub(super) struct ClickArgs {
+    pub(super) slot: i64,
+    pub(super) button: String,
+    pub(super) shift: bool,
+    pub(super) mode: String,
+    pub(super) hotbar: i64,
+}
+
+impl ClickArgs {
+    pub(super) fn parse(args: &Value) -> Result<ClickArgs, Failure> {
+        Ok(ClickArgs {
+            slot: integer(args, "slot", -1)?,
+            button: text(args, "button")?.to_owned(),
+            shift: boolean(args, "shift", false)?,
+            mode: text_or(args, "mode", "click")?.to_owned(),
+            hotbar: integer(args, "hotbar", 0)?,
+        })
+    }
+}
+
+/// Click the slot of the open window and describe what the click did, as click-slot answers.
+pub(super) async fn click_step(bot: &Bot, args: &ClickArgs) -> Result<Value, Failure> {
+    let slot = args.slot;
+    if slot < 0 {
+        return Err(Failure::bad_args("click-slot needs a slot, or outside for a click outside the window"));
+    }
+    let window = alive(bot, |game| require(&game.client))??;
+
+    if slot >= window.menu.len() as i64 {
+        return Err(out_of_range(slot, &window.menu));
+    }
+    let (click_type, key) = input(&args.mode, &args.button, args.shift, args.hotbar)?;
+    let swap = (click_type == ClickType::Swap).then_some(key);
+
+    let before = window.menu.slot(slot as usize).cloned().unwrap_or_default();
+    let swapped_before =
+        swap.map(|index| in_world(bot, |game| inventory_item(&game.client.component::<Inventory>(), index))).transpose()?;
+
+    let replaced = click(bot, window.id, slot as i16, key, click_type).await?;
+
+    if let Some(replaced) = replaced {
+        /* The window clicked is gone, and what its slots held is azalea's guess. */
+        let cursor = alive(bot, |game| game.client.component::<Inventory>().carried.clone())?;
+        return Ok(json!({
+            "slot": slot,
+            "outside": false,
+            "button": args.button,
+            "shift": args.shift,
+            "mode": args.mode,
+            "hotbar": if args.hotbar == 0 { Value::Null } else { json!(args.hotbar) },
+            "before": stacks::held(&before),
+            "after": null,
+            "cursor": stacks::held(&cursor),
+            "swapped": null,
+            "window": replaced,
+        }));
+    }
+
+    let (after, cursor, swapped_after) = alive(bot, |game| {
+        let client = &game.client;
+        let (after, cursor) = {
+            let inventory = client.component::<Inventory>();
+            (inventory.menu().slot(slot as usize).cloned().unwrap_or_default(), inventory.carried.clone())
+        };
+
+        /*
+        The off-hand is in no container window, so the server's answer does not carry it, and
+        what went there is read off the slot instead: a swap that happened left the slot
+        holding what the off-hand had, and the off-hand holding what the slot had.
+        */
+        if swap == Some(OFF_HAND) && swapped_before.as_ref().is_some_and(|had| *had == after && after != before) {
+            let _ = client.try_query_self::<&mut Inventory, _>(|mut inventory| {
+                inventory.inventory_menu.as_player_mut().offhand = before.clone();
+            });
+        }
+        let swapped_after = swap.map(|index| inventory_item(&client.component::<Inventory>(), index));
+        (after, cursor, swapped_after)
+    })?;
+
+    let swapped = match (swapped_before, swapped_after) {
+        (Some(before), Some(after)) => json!({"before": stacks::held(&before), "after": stacks::held(&after)}),
+        _ => Value::Null,
+    };
+
+    Ok(json!({
+        "slot": slot,
+        "outside": false,
+        "button": args.button,
+        "shift": args.shift,
+        "mode": args.mode,
+        "hotbar": if args.hotbar == 0 { Value::Null } else { json!(args.hotbar) },
+        "before": stacks::held(&before),
+        "after": stacks::held(&after),
+        "cursor": stacks::held(&cursor),
+        "swapped": swapped,
+        "window": null,
+    }))
+}
 
 /// A click outside the window drops the cursor: all of it on the left button, one item on the right.
 /// It lands on no slot, so what goes back as before and after is the cursor.
