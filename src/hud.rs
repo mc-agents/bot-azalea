@@ -23,7 +23,8 @@ use azalea::registry::data::DimensionKind;
 use azalea::registry::{DataRegistry, Holder};
 use azalea::block::BlockTrait;
 use azalea::core::entity_id::MinecraftEntityId;
-use azalea::registry::builtin::{BlockEntityKind, BlockKind};
+use azalea::core::sound::CustomSound;
+use azalea::registry::builtin::{BlockEntityKind, BlockKind, SoundEvent};
 use azalea::{BlockPos, FormattedText, Identifier};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
@@ -98,6 +99,7 @@ fn kept(packet: &ClientboundGamePacket) -> bool {
             /* Not the HUD: what azalea drops from a window's contents, which tools::received puts back. */
             /* Not the HUD either: a sound, which a press may be waiting on. */
             | P::Sound(_)
+            | P::SoundEntity(_)
             | P::OpenScreen(_)
             | P::ContainerSetContent(_)
             | P::SetCursorItem(_)
@@ -323,10 +325,9 @@ pub fn apply(bot: &Bot, packet: &ClientboundGamePacket) {
             }
             hud.sign_editor = Some(SignEditor { at: p.pos, front: p.is_front_text, hanging: block.ends_with("hanging_sign"), lines: kept });
         }
-        P::Sound(p) => feeds::sound(bot, match &p.sound {
-            Holder::Reference(sound) => sound.to_str().to_owned(),
-            Holder::Direct(custom) => custom.sound_id.to_string(),
-        }),
+        P::Sound(p) => feeds::sound(bot, sound_id(&p.sound)),
+        /* A sound played at an entity rather than at a place, which a plugin does with playSound(player, ...). */
+        P::SoundEntity(p) => feeds::sound(bot, sound_id(&p.sound)),
         _ => {
             let game = bot.game.borrow();
             let Some(game) = game.as_ref() else { return };
@@ -365,6 +366,13 @@ pub fn registered_dialog(bot: &Bot, id: &str) -> Option<Value> {
         let entries = registries.extra.get(&Identifier::new("minecraft:dialog"))?;
         entries.map.get(&Identifier::new(id)).and_then(|nbt| serde_json::to_value(nbt).ok())
     })
+}
+
+fn sound_id(sound: &Holder<SoundEvent, CustomSound>) -> String {
+    match sound {
+        Holder::Reference(sound) => sound.to_str().to_owned(),
+        Holder::Direct(custom) => custom.sound_id.to_string(),
+    }
 }
 
 fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
