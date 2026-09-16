@@ -103,3 +103,7 @@ docker run --rm -e MCP_SERVER_HOST=host.docker.internal -e BOT_NAME=a1 bot-azale
   tick later, so `press: use`, `use-held-item` with a hold and a `useItem` step all send the
   release, which the server ignores when nothing is in use.
 - **A disconnected client stays in the ECS.** Joining again and again in one process grows it.
+
+## License
+
+Apache License 2.0; see [LICENSE](LICENSE).
