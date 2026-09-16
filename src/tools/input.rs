@@ -406,8 +406,14 @@ impl Keys {
                 let before = self.before;
                 client.query_self::<&mut PhysicsState, _>(|mut state| state.trying_to_sprint = before);
             }
-            /* The client tells the server it let go only of an item that was in use: a drawn bow, food. */
-            Key::Use if self.using() => client.write_packet(action(Action::ReleaseUseItem, BlockPos::default(), 0)),
+            /*
+            The client tells the server it let go of an item it had started using: a drawn bow,
+            food. It knows from its own prediction; this bot only has the flag the server syncs a
+            tick later, which a tap lets go of before it arrives, and a release the server has
+            nothing in use for is a no-op there, whereas one withheld leaves the bow drawn. So
+            every use is let go of, as use-held-item lets go of its hold.
+            */
+            Key::Use => client.write_packet(action(Action::ReleaseUseItem, BlockPos::default(), 0)),
             /* Let go before a block broke, the client tells the server it stopped. */
             Key::Attack => {
                 client.left_click_mine(false);

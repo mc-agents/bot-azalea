@@ -219,6 +219,8 @@ pub(super) fn use_item(client: &Client, offhand: bool) -> String {
 
 /// A held use, released when the call ends however it ends. Left in use, the server goes on
 /// treating the bot as drawing a bow or raising a shield for as long as it stays in the world.
+/// Released whether or not the server had the item in use: the flag it syncs comes a tick after
+/// the use began, a release for nothing is a no-op there, and a press's use key lets go the same way.
 pub(super) struct Using(pub(super) Client);
 
 impl Drop for Using {

@@ -98,4 +98,8 @@ docker run --rm -e MCP_SERVER_HOST=host.docker.internal -e BOT_NAME=a1 bot-azale
   `press-container-button`'s.
 - **An anvil's name box is not modelled.** `type-text` with an anvil open refuses with
   `UNSUPPORTED_INPUT`, where `bot-fabric` types into the box and the server renames the item.
+- **Every use is let go of with a release packet.** The client predicts whether a right-click
+  started using the item and releases only then; this bot has only the flag the server syncs a
+  tick later, so `press: use`, `use-held-item` with a hold and a `useItem` step all send the
+  release, which the server ignores when nothing is in use.
 - **A disconnected client stays in the ECS.** Joining again and again in one process grows it.
