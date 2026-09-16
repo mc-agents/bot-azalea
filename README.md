@@ -91,4 +91,15 @@ docker run --rm -e MCP_SERVER_HOST=host.docker.internal -e BOT_NAME=a1 bot-azale
   `run-inputs` wait two seconds for the window to come back and then read what there is, where
   `bot-fabric` stops with `CLICK_UNCONFIRMED`. A `press` step ends up to three ticks after the key
   came up, once azalea has told the server, and `endedTick` reports that.
+- **A book screen's buttons are not modelled.** `press-dialog-button` with a chest or a book open
+  and no dialog names the screen and offers no buttons, as `bot-fabric` does on a chest; on a book
+  or a lectern `bot-fabric` presses "Done" or "Take Book", and this bot refuses with
+  `NO_SUCH_BUTTON`. `close-window` closes either, and a lectern's "take book" is
+  `press-container-button`'s.
+- **An anvil's name box is not modelled.** `type-text` with an anvil open refuses with
+  `UNSUPPORTED_INPUT`, where `bot-fabric` types into the box and the server renames the item.
+- **`wait-ticks` ends with the connection.** A kick during the wait answers `NOT_IN_GAME` within
+  about a second rather than sitting out the call's deadline, and that is the answer to a wait
+  started with no connection at all; a switch through a proxy is no refusal, the wait spans it.
+  `bot-fabric` on its title screen still answers "Waited N tick(s)".
 - **A disconnected client stays in the ECS.** Joining again and again in one process grows it.

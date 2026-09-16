@@ -114,6 +114,8 @@ fn keep_game(mut received: MessageReader<ReceiveGamePacketEvent>, mut players: Q
             }
             P::MerchantOffers(p) => menus.offers = Some(p.clone()),
             P::OpenBook(p) => menus.book = Some(p.hand),
+            /* A new level puts the client's loading screen up in place of whatever was open, a book included. */
+            P::Login(_) | P::Respawn(_) => menus.book = None,
             P::UpdateRecipes(p) => menus.stonecutter = p.stonecutter_recipes.clone(),
             P::RecipeBookAdd(p) => {
                 if p.replace {

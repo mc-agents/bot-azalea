@@ -1,22 +1,27 @@
 use azalea::local_player::LocalGameMode;
 use azalea::core::game_type::GameMode;
+use azalea::inventory::Menu;
 use azalea::protocol::packets::game::{ServerboundSetCommandBlock, ServerboundSignUpdate};
 use azalea::{BlockPos, Client};
 use serde_json::{Value, json};
 
 use super::args::{boolean, plain, point, position, text};
 use super::dialogs::{offered, pick_by};
-use super::{Tool, in_world};
+use super::{Tool, in_world, windows};
 use crate::calls::{Answer, Failure, Outcome};
 use crate::dialog::{Held, Kind, flatten};
 use crate::editors::{CommandEditor, SignEditor, is_sign, sign_face, text_width};
 use crate::game::Game;
 use crate::hud::block_name;
+use crate::menus::Menus;
 
 /// The longest command the editor's box takes.
 const COMMAND_LENGTH: usize = 32_500;
 
 const COMMAND_SCREEN: &str = "CommandBlockEditScreen";
+
+/// What the client draws a book from the hand with. One on a lectern is its menu's screen.
+const BOOK_SCREEN: &str = "BookViewScreen";
 
 pub const TYPE_TEXT: Tool = Tool {
     name: "type-text",
@@ -44,7 +49,7 @@ pub const TYPE_TEXT: Tool = Tool {
                     drop(hud);
                     return type_into_command_block(game, &typed, wanted.as_deref(), replace);
                 }
-                Err(Failure::refused("NO_SCREEN", "no screen is open, so there is nothing to type into"))
+                Err(nothing_to_type_into(game))
             })?
         })
     },
@@ -118,7 +123,10 @@ pub fn press(game: &Game, label: &str) -> Outcome {
     }
 
     let Some(editor) = hud.command_editor.as_mut() else {
-        return Err(Failure::refused("NO_SCREEN", "no screen is open"));
+        return Err(match screen_on_top(game) {
+            Some(screen) => no_such_button(label, screen, std::iter::empty()),
+            None => Failure::refused("NO_SCREEN", "no screen is open"),
+        });
     };
     let buttons = editor.buttons();
     let Some(index) = pick_by(&buttons, label, String::as_str).and_then(|chosen| buttons.iter().position(|button| std::ptr::eq(button, chosen)))
@@ -158,6 +166,38 @@ pub fn close(game: &Game) -> Option<(String, &'static str)> {
         return Some((editor.title().to_owned(), "sign editor"));
     }
     hud.command_editor.take().map(|_| (String::new(), "command block editor"))
+}
+
+/// The screen up when no dialog and no editor is: a book held open over the world, or the one a
+/// menu the server opened is drawn by. A refusal names it, as the other kind of bot names the
+/// screen it found in place of the one asked for; that screen's own buttons -- a book's "Done", a
+/// lectern's "Take Book" -- are not modelled here, and close-window is what closes it.
+fn screen_on_top(game: &Game) -> Option<&'static str> {
+    if book_open(game) {
+        return Some(BOOK_SCREEN);
+    }
+    windows::menu(&game.client).map(|window| windows::screen(&window.menu))
+}
+
+fn book_open(game: &Game) -> bool {
+    game.client.get_component::<Menus>().is_some_and(|menus| menus.book.is_some())
+}
+
+/// No dialog and no editor to type into. An anvil's name box is a text field the other kind of bot
+/// types into and this one does not model, so its refusal is not the one that says the screen has
+/// no field: that would be wrong about the screen.
+fn nothing_to_type_into(game: &Game) -> Failure {
+    if book_open(game) {
+        return no_text_field(BOOK_SCREEN);
+    }
+    match windows::menu(&game.client) {
+        Some(window) if matches!(window.menu, Menu::Anvil { .. }) => Failure::refused(
+            "UNSUPPORTED_INPUT",
+            format!("{} has a name box this bot does not know how to type into", windows::screen(&window.menu)),
+        ),
+        Some(window) => no_text_field(windows::screen(&window.menu)),
+        None => Failure::refused("NO_SCREEN", "no screen is open, so there is nothing to type into"),
+    }
 }
 
 fn type_into_dialog(game: &Game, typed: &str, wanted: Option<&str>, replace: bool) -> Outcome {
@@ -406,4 +446,18 @@ fn no_such_button<'a>(label: &str, screen: &str, buttons: impl Iterator<Item = &
 
 fn pressed(label: &str) -> Answer {
     Answer::data(format!("pressed \"{label}\""), json!({"label": label, "confirmed": false, "screenAfter": Value::Null}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::no_such_button;
+
+    /// The sentence a chest or a book gets is the other kind of bot's for a screen with no button
+    /// on it, word for word: the end-to-end suite holds both kinds to it.
+    #[test]
+    fn a_screen_with_no_buttons_is_named_and_offers_none() {
+        let refused = no_such_button("Done", "ContainerScreen", std::iter::empty());
+        assert_eq!(refused.code, "NO_SUCH_BUTTON");
+        assert_eq!(refused.message, "no button matching \"Done\" on ContainerScreen; it offers none");
+    }
 }
