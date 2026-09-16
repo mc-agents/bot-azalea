@@ -13,6 +13,7 @@ use azalea::connection::RawConnection;
 use azalea::ecs::world::World;
 use azalea::events::LocalPlayerEvents;
 use azalea::join::{ConnectOpts, StartJoinServerEvent};
+use azalea::player::GameProfileComponent;
 use azalea::protocol::address::ResolvableAddr;
 use azalea::protocol::packets::game::ClientboundGamePacket;
 use azalea::swarm::DefaultSwarmPlugins;
@@ -200,7 +201,17 @@ async fn join(bot: Rc<Bot>, host: String, port: u16, username: String, spawn_tim
     .await;
     let (events, receiver) = mpsc::unbounded_channel();
     let (packets, hud_packets) = mpsc::unbounded_channel();
-    ecs().write().entity_mut(client.entity).insert((LocalPlayerEvents(events), HudPackets(packets), Menus::default(), Known::default()));
+    /*
+    azalea keeps one entity per name and never takes the profile a login left on it, so the one
+    from the connection before is taken off here: the pump reads the profile's presence as this
+    connection's login having finished.
+    */
+    ecs().write().entity_mut(client.entity).remove::<GameProfileComponent>().insert((
+        LocalPlayerEvents(events),
+        HudPackets(packets),
+        Menus::default(),
+        Known::default(),
+    ));
 
     let (alive, ended) = oneshot::channel();
     *bot.game.borrow_mut() = Some(Game {
@@ -356,8 +367,17 @@ async fn pump(
                 let dropped = mine(&bot) && !bot.game.borrow().as_ref().is_some_and(|game| game.leaving.get());
 
                 if let Some(joined) = joined.take() {
-                    /* Kicked before spawning is a login refused; after logging in, a world that never came. */
-                    let code = if logged_in { "JOIN_FAILED_SPAWN" } else { "JOIN_FAILED_LOGIN" };
+                    /*
+                    Kicked before the login finished is a login refused; after it, a world that
+                    never came. The Login event is the play-state login packet, which comes after
+                    configuration, so a server that took the login and kicked from configuration
+                    -- a plugin, a transfer -- has sent no event that says so. The profile the
+                    login handshake put on the entity says it, and a disconnect leaves it there.
+                    */
+                    let profile = bot.game.borrow().as_ref().filter(|game| game.generation == generation).is_some_and(|game| {
+                        game.client.get_component::<GameProfileComponent>().is_some()
+                    });
+                    let code = if logged_in || profile { "JOIN_FAILED_SPAWN" } else { "JOIN_FAILED_LOGIN" };
                     let _ = joined.send(Err(Failure::refused(code, reason.clone())));
                 } else if dropped {
                     bot.status("disconnected", Some(&reason));

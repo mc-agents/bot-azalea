@@ -9,6 +9,7 @@ use tokio::task::JoinHandle;
 
 use super::args::{integer, text};
 use super::command::slashed;
+use super::hands::{self, Using};
 use super::input::{self, PressArgs, TICK_MS, Watch};
 use super::windows::{self, ClickArgs};
 use super::{Tool, alive, in_world, tick};
@@ -19,9 +20,31 @@ use crate::text::Line;
 enum Step {
     Press(PressArgs),
     Click(ClickArgs),
+    UseItem(UseArgs),
     Command(String),
     Wait(u32),
     WaitFor(Watch),
+}
+
+/// A useItem step's arguments as the wire gives them, checked.
+struct UseArgs {
+    offhand: bool,
+    hold: u32,
+}
+
+impl UseArgs {
+    fn parse(step: &Value) -> Result<UseArgs, Failure> {
+        let offhand = match text(step, "useItem")? {
+            "main-hand" => false,
+            "off-hand" => true,
+            hand => return Err(Failure::bad_args(format!("unknown hand {hand}"))),
+        };
+        Ok(UseArgs { offhand, hold: integer(step, "holdTicks", 1)? as u32 })
+    }
+
+    fn hand(&self) -> &'static str {
+        if self.offhand { "off-hand" } else { "main-hand" }
+    }
 }
 
 impl Step {
@@ -29,6 +52,7 @@ impl Step {
         match self {
             Step::Press(_) => "press",
             Step::Click(_) => "click",
+            Step::UseItem(_) => "useItem",
             Step::Command(_) => "command",
             Step::Wait(_) => "wait",
             Step::WaitFor(_) => "waitFor",
@@ -40,15 +64,13 @@ impl Step {
     fn asked(&self) -> String {
         match self {
             Step::Press(press) => {
-                let mut asked = match press.slot {
+                let asked = match press.slot {
                     Some(slot) => format!("press hotbar {slot}"),
                     None => format!("press {}", press.key()),
                 };
-                if press.hold > 1 {
-                    asked.push_str(&format!(" for {} ticks", press.hold));
-                }
-                asked
+                asked + &held(press.hold)
             }
+            Step::UseItem(args) => format!("use item in {}{}", if args.offhand { "off-hand" } else { "main hand" }, held(args.hold)),
             Step::Click(click) if click.mode != "click" => {
                 let mut asked = format!("{} slot {}", click.mode, click.slot);
                 if click.hotbar != 0 {
@@ -73,11 +95,13 @@ impl Step {
         }
     }
 
-    /// The least the step takes, in ticks: a press is down for holdTicks and up for one, a click
-    /// is sent on one tick, and a command or a line that is already there takes none.
+    /// The least the step takes, in ticks: a press is down for holdTicks and up for one, an item is
+    /// in use for as long, a click is sent on one tick, and a command or a line that is already
+    /// there takes none.
     fn least_ticks(&self) -> u64 {
         match self {
             Step::Press(press) => u64::from(press.hold) + 1,
+            Step::UseItem(args) => u64::from(args.hold) + 1,
             Step::Click(_) => 1,
             Step::Wait(ticks) => u64::from(*ticks),
             Step::Command(_) | Step::WaitFor(_) => 0,
@@ -85,7 +109,12 @@ impl Step {
     }
 }
 
-const KINDS: [&str; 5] = ["press", "click", "command", "wait", "waitFor"];
+/// How long a key or an item was held, worded only when it was longer than a tap.
+fn held(hold: u32) -> String {
+    if hold > 1 { format!(" for {hold} ticks") } else { String::new() }
+}
+
+const KINDS: [&str; 6] = ["press", "click", "useItem", "command", "wait", "waitFor"];
 
 /// The step at `index`, which is exactly one of the kinds; the fields that shape another kind are
 /// filled in by mcp-server whether or not the caller gave them, so they are not a second kind.
@@ -94,7 +123,7 @@ fn parse(step: &Value, index: usize, timeout: u64) -> Result<Step, Failure> {
     let named: Vec<&str> = KINDS.into_iter().filter(|kind| !step[*kind].is_null()).collect();
     let kind = match named[..] {
         [kind] => kind,
-        [] => return Err(Failure::refused("BAD_STEP", format!("step {number} names none of press, click, command, wait or waitFor"))),
+        [] => return Err(Failure::refused("BAD_STEP", format!("step {number} names none of press, click, useItem, command, wait or waitFor"))),
         [first, second, ..] => return Err(Failure::refused("BAD_STEP", format!("step {number} names both {first} and {second}"))),
     };
 
@@ -124,6 +153,7 @@ fn parse(step: &Value, index: usize, timeout: u64) -> Result<Step, Failure> {
             "hotbar": step["hotbar"],
         }))
         .map(Step::Click),
+        "useItem" => UseArgs::parse(step).map(Step::UseItem),
         "command" => text(step, "command").map(|command| Step::Command(slashed(command))),
         "wait" => integer(step, "wait", 1).map(|ticks| Step::Wait(ticks as u32)),
         _ => Watch::parse(&json!({"feed": step["feed"], "pattern": step["waitFor"]})).map(Step::WaitFor),
@@ -236,6 +266,23 @@ async fn run(bot: &Bot, step: Step, shown: &mut Shown, from: usize, started_tick
             tick(bot).await;
             Ok(clicked)
         }
+        Step::UseItem(args) => {
+            input::game_takes_keys(bot)?;
+            let (using, item) = alive(bot, |game| {
+                let item = hands::use_item(&game.client, args.offhand);
+                (Using(game.client.clone()), item)
+            })?;
+            /*
+            The use goes out on the tick the step started on and is let go of holdTicks later; the
+            tick after that is the step's too, so the game reads the release before the next step,
+            as it reads a press's key coming up.
+            */
+            let released = started_tick + u64::from(args.hold);
+            alive_until(bot, tick0, released).await?;
+            drop(using);
+            alive_until(bot, tick0, released + 1).await?;
+            Ok(json!({"hand": args.hand(), "item": item, "holdTicks": args.hold}))
+        }
         Step::Command(command) => {
             in_world(bot, |game| game.client.write_command_packet(&command[1..]))?;
             Ok(json!(command))
@@ -252,12 +299,21 @@ async fn run(bot: &Bot, step: Step, shown: &mut Shown, from: usize, started_tick
     }
 }
 
+/// Ticks, with the bot alive, until the sequence's clock reads `until`.
+async fn alive_until(bot: &Bot, tick0: u64, until: u64) -> Result<(), Failure> {
+    while bot.ticks.borrow().saturating_sub(tick0) < until {
+        alive(bot, |_| ())?;
+        tick(bot).await;
+    }
+    Ok(())
+}
+
 /// Inputs made one after another inside the bot, each on the client tick the one before ended on,
 /// so that what lies between two of them is the ticks asked for and not a round trip each.
 ///
 /// A step the game refuses ends the sequence with the steps that ran still answered: what they
 /// did is what the caller wanted the sequence for. So does timeoutMs running out, with the step it
-/// ran out in cut short; a key held then is let go of as the press is dropped.
+/// ran out in cut short; a key or an item held then is let go of as the step is dropped.
 pub const RUN_INPUTS: Tool = Tool {
     name: "run-inputs",
     run: |bot, args| {
@@ -295,6 +351,7 @@ pub const RUN_INPUTS: Tool = Tool {
                     "endedTick": ended_tick,
                     "press": null,
                     "click": null,
+                    "useItem": null,
                     "command": null,
                     "wait": null,
                     "waitFor": null,
@@ -338,7 +395,7 @@ mod tests {
     /// A step as mcp-server sends one: every field present, the ones not given at their defaults.
     fn step(given: Value) -> Value {
         let mut step = json!({
-            "press": null, "slot": null, "holdTicks": 1, "click": null, "button": "left", "shift": false,
+            "press": null, "slot": null, "holdTicks": 1, "useItem": null, "click": null, "button": "left", "shift": false,
             "mode": "click", "hotbar": null, "command": null, "wait": null, "waitFor": null, "feed": "actionBar",
         });
         for (name, value) in given.as_object().unwrap() {
@@ -363,6 +420,10 @@ mod tests {
         assert_eq!(asked(json!({"press": "jump"})), "press jump");
         assert_eq!(asked(json!({"press": "hotbar", "slot": 0})), "press hotbar 0");
         assert_eq!(asked(json!({"press": "use", "holdTicks": 40})), "press use for 40 ticks");
+        assert_eq!(asked(json!({"useItem": "main-hand"})), "use item in main hand");
+        assert_eq!(asked(json!({"useItem": "off-hand"})), "use item in off-hand");
+        assert_eq!(asked(json!({"useItem": "main-hand", "holdTicks": 40})), "use item in main hand for 40 ticks");
+        assert_eq!(asked(json!({"useItem": "off-hand", "holdTicks": 2})), "use item in off-hand for 2 ticks");
         assert_eq!(asked(json!({"click": 13})), "click slot 13");
         assert_eq!(asked(json!({"click": 13, "button": "right", "shift": true})), "click slot 13 with the right button with shift");
         assert_eq!(asked(json!({"click": 13, "mode": "swap-hotbar", "hotbar": 2})), "swap-hotbar slot 13 with hotbar 2");
@@ -396,11 +457,24 @@ mod tests {
     fn a_step_naming_no_kind_or_two_is_refused_by_its_number() {
         let none = refusal(json!({}), 2);
         assert_eq!(none.code, "BAD_STEP");
-        assert_eq!(none.message, "step 3 names none of press, click, command, wait or waitFor");
+        assert_eq!(none.message, "step 3 names none of press, click, useItem, command, wait or waitFor");
 
         let both = refusal(json!({"press": "jump", "click": 13}), 2);
         assert_eq!(both.code, "BAD_STEP");
         assert_eq!(both.message, "step 3 names both press and click");
+
+        /* Named in the order the kinds are listed, not the order the step gave them. */
+        let both = refusal(json!({"useItem": "main-hand", "click": 13}), 0);
+        assert_eq!(both.message, "step 1 names both click and useItem");
+    }
+
+    /// An item is in use for holdTicks and let go of on the tick after, as a key is.
+    #[test]
+    fn a_use_takes_its_hold_and_the_tick_it_is_released_on() {
+        let least = |given| parse(&step(given), 0, 10_000).unwrap_or_else(|failure| panic!("{}", failure.message)).least_ticks();
+        assert_eq!(least(json!({"useItem": "main-hand"})), 2);
+        assert_eq!(least(json!({"useItem": "off-hand", "holdTicks": 40})), 41);
+        assert_eq!(least(json!({"useItem": "off-hand", "holdTicks": 40})), least(json!({"press": "use", "holdTicks": 40})));
     }
 
     #[test]

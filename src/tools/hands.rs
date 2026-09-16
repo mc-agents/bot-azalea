@@ -183,20 +183,9 @@ pub const USE_HELD_ITEM: Tool = Tool {
         Box::pin(async move {
             let offhand = args["offhand"].as_bool().unwrap_or(false);
             let hold = args["holdMs"].as_u64().unwrap_or(0);
-            let (hand, place) = if offhand { (InteractionHand::OffHand, "off-hand") } else { (InteractionHand::MainHand, "main hand") };
+            let place = if offhand { "off-hand" } else { "main hand" };
 
-            /*
-            A right-click at the air, whatever the bot is looking at: activate-block is the click on
-            a block, and this is the one for the item itself.
-            */
-            let (client, held) = alive(&bot, |game| {
-                let client = game.client.clone();
-                let held = describe(&client, offhand);
-                let seq = client.query_self::<&mut BlockStatePredictionHandler, _>(|mut prediction| prediction.start_predicting());
-                let look = *client.component::<LookDirection>();
-                client.write_packet(ServerboundUseItem { hand, seq, y_rot: look.y_rot(), x_rot: look.x_rot() });
-                (client, held)
-            })?;
+            let (client, held) = alive(&bot, |game| (game.client.clone(), use_item(&game.client, offhand)))?;
 
             /*
             A plain use leaves the item in use on purpose -- that is how food is eaten. A hold is what
@@ -216,9 +205,21 @@ pub const USE_HELD_ITEM: Tool = Tool {
     },
 };
 
+/// A right-click at the air with the item in a hand, whatever the bot is looking at: activate-block
+/// is the click on a block, and this is the one for the item itself. Answers with what was in the
+/// hand as the use began, in the words the tools use for it.
+pub(super) fn use_item(client: &Client, offhand: bool) -> String {
+    let held = describe(client, offhand);
+    let hand = if offhand { InteractionHand::OffHand } else { InteractionHand::MainHand };
+    let seq = client.query_self::<&mut BlockStatePredictionHandler, _>(|mut prediction| prediction.start_predicting());
+    let look = *client.component::<LookDirection>();
+    client.write_packet(ServerboundUseItem { hand, seq, y_rot: look.y_rot(), x_rot: look.x_rot() });
+    held
+}
+
 /// A held use, released when the call ends however it ends. Left in use, the server goes on
 /// treating the bot as drawing a bow or raising a shield for as long as it stays in the world.
-struct Using(Client);
+pub(super) struct Using(pub(super) Client);
 
 impl Drop for Using {
     fn drop(&mut self) {

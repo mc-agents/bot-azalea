@@ -98,8 +98,4 @@ docker run --rm -e MCP_SERVER_HOST=host.docker.internal -e BOT_NAME=a1 bot-azale
   `press-container-button`'s.
 - **An anvil's name box is not modelled.** `type-text` with an anvil open refuses with
   `UNSUPPORTED_INPUT`, where `bot-fabric` types into the box and the server renames the item.
-- **`wait-ticks` ends with the connection.** A kick during the wait answers `NOT_IN_GAME` within
-  about a second rather than sitting out the call's deadline, and that is the answer to a wait
-  started with no connection at all; a switch through a proxy is no refusal, the wait spans it.
-  `bot-fabric` on its title screen still answers "Waited N tick(s)".
 - **A disconnected client stays in the ECS.** Joining again and again in one process grows it.
