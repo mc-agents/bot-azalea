@@ -25,7 +25,10 @@ pub const GET_BLOCK_INFO: Tool = Tool {
                 let kind = BlockKind::from(state);
                 json!({"name": plain(kind.to_str()), "type": kind.to_u32(), "position": point(at)})
             });
-            Ok(Answer::data(format!("block at {}, {}, {}", at.x, at.y, at.z), json!({"position": point(at), "block": block})))
+            Ok(Answer::data(
+                format!("block at {}, {}, {}", at.x, at.y, at.z),
+                json!({"position": point(at), "block": block}),
+            ))
         })
     },
 };
@@ -60,7 +63,10 @@ pub const FIND_BLOCKS: Tool = Tool {
                                 continue;
                             }
                             let at = BlockPos::new(from.x + x, from.y + y, from.z + z);
-                            if world.get_block_state(at).is_some_and(|state| BlockKind::from(state) == wanted) {
+                            if world
+                                .get_block_state(at)
+                                .is_some_and(|state| BlockKind::from(state) == wanted)
+                            {
                                 found.push(at);
                             }
                         }

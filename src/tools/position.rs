@@ -13,9 +13,16 @@ pub const GET_POSITION: Tool = Tool {
             */
             let (x, y, z) = in_world(&bot, |game| {
                 let position = game.client.position();
-                (position.x.floor() as i32, position.y.floor() as i32, position.z.floor() as i32)
+                (
+                    position.x.floor() as i32,
+                    position.y.floor() as i32,
+                    position.z.floor() as i32,
+                )
             })?;
-            Ok(Answer::data(format!("standing at {x}, {y}, {z}"), json!({"position": {"x": x, "y": y, "z": z}})))
+            Ok(Answer::data(
+                format!("standing at {x}, {y}, {z}"),
+                json!({"position": {"x": x, "y": y, "z": z}}),
+            ))
         })
     },
 };

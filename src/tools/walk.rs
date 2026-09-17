@@ -21,7 +21,9 @@ pub const MOVE_TO_POSITION: Tool = Tool {
     run: |bot, args| {
         Box::pin(async move {
             let target = position(&args)?;
-            let range = args["range"].as_f64().ok_or_else(|| Failure::bad_args("expected a number for range"))?;
+            let range = args["range"]
+                .as_f64()
+                .ok_or_else(|| Failure::bad_args("expected a number for range"))?;
             let timeout = Duration::from_millis(args["timeoutMs"].as_u64().unwrap_or(60_000));
 
             /*
@@ -139,7 +141,10 @@ impl Walk {
             );
         }
 
-        let left = self.client.get_component::<ExecutingPath>().map_or(0, |path| path.path.len());
+        let left = self
+            .client
+            .get_component::<ExecutingPath>()
+            .map_or(0, |path| path.path.len());
         if left > self.left {
             self.route = self.route.max(left);
         }
@@ -169,11 +174,16 @@ impl Walk {
     /// exists and stops short.
     fn trouble(&self) -> String {
         if !self.loaded {
-            "the client could not search a route: the target or the ground under this bot is outside the chunks it has".into()
+            "the client could not search a route: the target or the ground under this bot is outside the chunks it has"
+                .into()
         } else if self.route == 0 {
             "no route to it over the blocks the client can see".into()
         } else {
-            format!("followed a route of {} block(s) and stopped at step {}", self.route, self.route - self.left)
+            format!(
+                "followed a route of {} block(s) and stopped at step {}",
+                self.route,
+                self.route - self.left
+            )
         }
     }
 

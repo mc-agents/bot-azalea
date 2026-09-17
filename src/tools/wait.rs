@@ -5,7 +5,10 @@ pub const WAIT_TICKS: Tool = Tool {
     name: "wait-ticks",
     run: |bot, args| {
         Box::pin(async move {
-            let ticks = args["ticks"].as_u64().filter(|ticks| *ticks >= 1).ok_or_else(|| Failure::bad_args("ticks must be at least 1"))?;
+            let ticks = args["ticks"]
+                .as_u64()
+                .filter(|ticks| *ticks >= 1)
+                .ok_or_else(|| Failure::bad_args("ticks must be at least 1"))?;
 
             /*
             The server's ticks as the client runs them, which is what "wait for the plugin to react"
@@ -42,7 +45,8 @@ mod tests {
     async fn without_a_connection_the_wait_says_the_bot_is_not_in_a_world() {
         let bot = Rc::new(Bot::new(Config::from_env()));
 
-        let outcome = tokio::time::timeout(Duration::from_millis(500), (WAIT_TICKS.run)(bot, json!({"ticks": 400}))).await;
+        let outcome =
+            tokio::time::timeout(Duration::from_millis(500), (WAIT_TICKS.run)(bot, json!({"ticks": 400}))).await;
 
         match outcome {
             Ok(Err(refused)) => assert_eq!(refused.code, "NOT_IN_GAME"),

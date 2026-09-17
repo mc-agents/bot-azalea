@@ -30,7 +30,14 @@ const DIG_PATIENCE_TICKS: u32 = 600;
 const DIG_RETRY_TICKS: u32 = 5;
 
 /// The faces a block can be placed against, in the order they are tried after the caller's own.
-const FACES: [Direction; 6] = [Direction::Down, Direction::Up, Direction::North, Direction::South, Direction::East, Direction::West];
+const FACES: [Direction; 6] = [
+    Direction::Down,
+    Direction::Up,
+    Direction::North,
+    Direction::South,
+    Direction::East,
+    Direction::West,
+];
 
 pub const DIG_BLOCK: Tool = Tool {
     name: "dig-block",
@@ -88,7 +95,10 @@ struct Digging(Client);
 impl Drop for Digging {
     fn drop(&mut self) {
         if self.0.is_mining() {
-            self.0.ecs.write().write_message(StopMiningBlockEvent { entity: self.0.entity });
+            self.0
+                .ecs
+                .write()
+                .write_message(StopMiningBlockEvent { entity: self.0.entity });
         }
     }
 }
@@ -109,7 +119,10 @@ pub const PLACE_BLOCK: Tool = Tool {
                 let feet = BlockPos::from(game.client.position());
                 /* Standing in the space is the one placement a server will never accept. */
                 if at == feet || at == feet.up(1) {
-                    return Err(Failure::refused("INSIDE_THE_BOT", "Cannot place a block inside the bot itself"));
+                    return Err(Failure::refused(
+                        "INSIDE_THE_BOT",
+                        "Cannot place a block inside the bot itself",
+                    ));
                 }
                 let state = block_at(game, at);
                 if !state.is_air() {
@@ -120,7 +133,10 @@ pub const PLACE_BLOCK: Tool = Tool {
                     .find(|face| !block_at(game, at.offset_with_direction(*face)).is_air())
                     .map(Ok)
                     .ok_or_else(|| {
-                        Failure::refused("NOTHING_TO_PLACE_AGAINST", format!("No solid block next to {} to place against", written(at)))
+                        Failure::refused(
+                            "NOTHING_TO_PLACE_AGAINST",
+                            format!("No solid block next to {} to place against", written(at)),
+                        )
                     })
             })??;
             let chosen = match chosen {
@@ -142,7 +158,11 @@ pub const PLACE_BLOCK: Tool = Tool {
                 Ok(())
             })??;
 
-            Ok(Answer::text(format!("Placed a block at {} against its {} face.", written(at), face_name(chosen))))
+            Ok(Answer::text(format!(
+                "Placed a block at {} against its {} face.",
+                written(at),
+                face_name(chosen)
+            )))
         })
     },
 };
@@ -161,7 +181,10 @@ pub const ACTIVATE_BLOCK: Tool = Tool {
             if !loaded {
                 return Err(Failure::refused(
                     "NOT_LOADED",
-                    format!("{} is outside the loaded chunks, so there is no block to activate", written(at)),
+                    format!(
+                        "{} is outside the loaded chunks, so there is no block to activate",
+                        written(at)
+                    ),
                 ));
             }
 
@@ -200,7 +223,9 @@ pub const USE_HELD_ITEM: Tool = Tool {
                 tick(&bot).await;
             }
             drop(using);
-            Ok(Answer::text(format!("Used {held} in the {place}, held for {hold}ms and released.")))
+            Ok(Answer::text(format!(
+                "Used {held} in the {place}, held for {hold}ms and released."
+            )))
         })
     },
 };
@@ -210,10 +235,19 @@ pub const USE_HELD_ITEM: Tool = Tool {
 /// hand as the use began, in the words the tools use for it.
 pub(super) fn use_item(client: &Client, offhand: bool) -> String {
     let held = describe(client, offhand);
-    let hand = if offhand { InteractionHand::OffHand } else { InteractionHand::MainHand };
+    let hand = if offhand {
+        InteractionHand::OffHand
+    } else {
+        InteractionHand::MainHand
+    };
     let seq = client.query_self::<&mut BlockStatePredictionHandler, _>(|mut prediction| prediction.start_predicting());
     let look = *client.component::<LookDirection>();
-    client.write_packet(ServerboundUseItem { hand, seq, y_rot: look.y_rot(), x_rot: look.x_rot() });
+    client.write_packet(ServerboundUseItem {
+        hand,
+        seq,
+        y_rot: look.y_rot(),
+        x_rot: look.x_rot(),
+    });
     held
 }
 
@@ -257,10 +291,18 @@ pub(super) fn use_item_on(client: &Client, block: BlockPos, direction: Direction
     let seq = client.query_self::<&mut BlockStatePredictionHandler, _>(|mut prediction| prediction.start_predicting());
     client.write_packet(ServerboundUseItemOn {
         hand: InteractionHand::MainHand,
-        block_hit: BlockHit { block_pos: block, direction, location, inside: false, world_border: false },
+        block_hit: BlockHit {
+            block_pos: block,
+            direction,
+            location,
+            inside: false,
+            world_border: false,
+        },
         seq,
     });
-    client.write_packet(ServerboundSwing { hand: InteractionHand::MainHand });
+    client.write_packet(ServerboundSwing {
+        hand: InteractionHand::MainHand,
+    });
 }
 
 /// The block at a position, and air outside the loaded chunks, which is what the game's own client
@@ -278,7 +320,11 @@ fn name(state: BlockState) -> &'static str {
 /// it is.
 fn describe(client: &Client, offhand: bool) -> String {
     let inventory = client.component::<Inventory>();
-    let stack = if offhand { &inventory.inventory_menu.as_player().offhand } else { inventory.held_item() };
+    let stack = if offhand {
+        &inventory.inventory_menu.as_player().offhand
+    } else {
+        inventory.held_item()
+    };
     if stack.is_empty() {
         return "an empty hand".into();
     }

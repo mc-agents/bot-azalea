@@ -10,7 +10,12 @@ const DAY: u64 = 24_000;
 
 /// The day timeline's sky light, as 26.1.2's `minecraft:day` keys it: a multiplier on full light at
 /// a tick of the day, eased linearly between keys and round the end of the day back to the first.
-const DAYLIGHT: [(u64, f32); 4] = [(133, 1.0), (11_867, 1.0), (13_670, 0.266_666_68), (22_330, 0.266_666_68)];
+const DAYLIGHT: [(u64, f32); 4] = [
+    (133, 1.0),
+    (11_867, 1.0),
+    (13_670, 0.266_666_68),
+    (22_330, 0.266_666_68),
+];
 
 /// What rain and thunder blend the sky light towards, and how far at full strength.
 const OVERCAST: f32 = 4.0;
@@ -37,7 +42,8 @@ pub const GET_WORLD_STATE: Tool = Tool {
                 let sky = hud.dimension().and_then(|(kind, name)| {
                     game.client.with_registry_holder(|registries| {
                         let (_, element) = kind.resolve(registries)?;
-                        let flag = |field: &str| matches!(element._extra.get(field), Some(NbtTag::Byte(value)) if *value != 0);
+                        let flag =
+                            |field: &str| matches!(element._extra.get(field), Some(NbtTag::Byte(value)) if *value != 0);
 
                         let clock = match element._extra.get("default_clock") {
                             Some(NbtTag::String(clock)) => registries
@@ -51,14 +57,23 @@ pub const GET_WORLD_STATE: Tool = Tool {
                         Some(Sky {
                             clock,
                             fixed_time: flag("has_fixed_time"),
-                            weather: flag("has_skylight") && !flag("has_ceiling") && name.to_string() != "minecraft:the_end",
+                            weather: flag("has_skylight")
+                                && !flag("has_ceiling")
+                                && name.to_string() != "minecraft:the_end",
                         })
                     })
                 });
-                let sky = sky.unwrap_or(Sky { clock: None, fixed_time: false, weather: false });
+                let sky = sky.unwrap_or(Sky {
+                    clock: None,
+                    fixed_time: false,
+                    weather: false,
+                });
 
                 /* A dimension with no clock of its own reads zero, as the game's own lookup does. */
-                let time = sky.clock.and_then(|clock| hud.clock_ticks(clock, ticks_now)).unwrap_or(0);
+                let time = sky
+                    .clock
+                    .and_then(|clock| hud.clock_ticks(clock, ticks_now))
+                    .unwrap_or(0);
                 let rain = if sky.weather { hud.raining() } else { 0.0 };
                 let thunder = if sky.weather { hud.thundering() } else { 0.0 };
 
@@ -109,7 +124,11 @@ fn sky_light(tick: u64, rain: f32, thunder: f32) -> f32 {
     let factor = (0..=last)
         .find_map(|index| {
             let (from, start) = DAYLIGHT[index];
-            let (to, end) = if index == last { (DAYLIGHT[0].0 + DAY, DAYLIGHT[0].1) } else { DAYLIGHT[index + 1] };
+            let (to, end) = if index == last {
+                (DAYLIGHT[0].0 + DAY, DAYLIGHT[0].1)
+            } else {
+                DAYLIGHT[index + 1]
+            };
             (tick >= from && tick < to).then(|| start + (end - start) * (tick - from) as f32 / (to - from) as f32)
         })
         .unwrap_or(1.0);

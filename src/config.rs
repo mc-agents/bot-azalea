@@ -8,6 +8,9 @@ pub struct Config {
     pub host: String,
     pub port: u16,
     pub bot_name: String,
+    /// What proves to the server that this is one of its own bots, when it has one to check
+    /// against. Sent once in `hello` and kept out of every log line.
+    pub link_token: Option<String>,
     pub health_port: u16,
     pub reconnect_min: Duration,
     pub reconnect_max: Duration,
@@ -21,6 +24,7 @@ impl Config {
             bot_name: text("BOT_NAME")
                 .or_else(|| text("HOSTNAME"))
                 .unwrap_or_else(|| "azalea".into()),
+            link_token: text("BOT_LINK_TOKEN"),
             health_port: number("HEALTH_PORT").unwrap_or(8080),
             reconnect_min: Duration::from_millis(number("RECONNECT_MIN_MS").unwrap_or(500)),
             reconnect_max: Duration::from_millis(number("RECONNECT_MAX_MS").unwrap_or(15000)),

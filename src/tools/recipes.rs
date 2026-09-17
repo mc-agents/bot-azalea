@@ -54,8 +54,14 @@ struct Book {
 }
 
 fn book(client: &Client) -> Book {
-    let recipes = client.get_component::<Menus>().map(|menus| menus.recipes.clone()).unwrap_or_default();
-    let known = client.get_component::<Known>().map(|known| known.clone()).unwrap_or_default();
+    let recipes = client
+        .get_component::<Menus>()
+        .map(|menus| menus.recipes.clone())
+        .unwrap_or_default();
+    let known = client
+        .get_component::<Known>()
+        .map(|known| known.clone())
+        .unwrap_or_default();
     Book { recipes, known }
 }
 
@@ -86,10 +92,17 @@ fn result(display: &RecipeDisplayData) -> &SlotDisplayData {
 /// Every stack a display stands for, as the game resolves one to list a recipe's results.
 fn stacks_of(display: &SlotDisplayData, known: &Known) -> Vec<(ItemKind, i32)> {
     match display {
-        SlotDisplayData::Tag(tag) => {
-            known.tag("minecraft:item", &tag.tag).iter().filter_map(|id| ItemKind::from_u32(*id as u32)).map(|item| (item, 1)).collect()
-        }
-        SlotDisplayData::Composite(composite) => composite.contents.iter().flat_map(|display| stacks_of(display, known)).collect(),
+        SlotDisplayData::Tag(tag) => known
+            .tag("minecraft:item", &tag.tag)
+            .iter()
+            .filter_map(|id| ItemKind::from_u32(*id as u32))
+            .map(|item| (item, 1))
+            .collect(),
+        SlotDisplayData::Composite(composite) => composite
+            .contents
+            .iter()
+            .flat_map(|display| stacks_of(display, known))
+            .collect(),
         other => first_item(other, known).into_iter().collect(),
     }
 }
@@ -104,7 +117,11 @@ impl Book {
         self.recipes
             .iter()
             .filter(|entry| is_crafting(&entry.display))
-            .filter(|entry| stacks_of(result(&entry.display), &self.known).iter().any(|(kind, _)| path(*kind) == item))
+            .filter(|entry| {
+                stacks_of(result(&entry.display), &self.known)
+                    .iter()
+                    .any(|(kind, _)| path(*kind) == item)
+            })
             .collect()
     }
 
@@ -129,7 +146,10 @@ impl Book {
 
     fn describe(&self, entry: &RecipeDisplayEntry, held: &HashMap<&'static str, i32>) -> Value {
         let needed = self.ingredients(entry);
-        let (item, count) = stacks_of(result(&entry.display), &self.known).first().copied().unwrap_or((ItemKind::Air, 0));
+        let (item, count) = stacks_of(result(&entry.display), &self.known)
+            .first()
+            .copied()
+            .unwrap_or((ItemKind::Air, 0));
         json!({
             "result": {"name": path(item), "count": count},
             "ingredients": counts(&needed),
@@ -157,7 +177,9 @@ impl Book {
         ordered.sort_by_key(|ingredient| left.keys().filter(|item| self.accepts(ingredient, **item)).count());
 
         ordered.iter().all(|ingredient| {
-            let found = left.iter_mut().find(|(item, count)| **count > 0 && self.accepts(ingredient, **item));
+            let found = left
+                .iter_mut()
+                .find(|(item, count)| **count > 0 && self.accepts(ingredient, **item));
             match found {
                 Some((_, count)) => {
                     *count -= 1;
@@ -170,7 +192,10 @@ impl Book {
 }
 
 fn counts(counted: &[(&'static str, i32)]) -> Vec<Value> {
-    counted.iter().map(|(name, count)| json!({"name": name, "count": count})).collect()
+    counted
+        .iter()
+        .map(|(name, count)| json!({"name": name, "count": count}))
+        .collect()
 }
 
 /// What the inventory is short of for one recipe. Empty means it can be made now.
@@ -188,7 +213,12 @@ fn missing(held: &HashMap<&'static str, i32>, needed: &[(&'static str, i32)]) ->
 fn held(client: &Client) -> HashMap<&'static str, i32> {
     let mut held = HashMap::new();
     if let Some(inventory) = client.get_component::<Inventory>() {
-        for stack in player_menu(&inventory).slots().iter().skip(BAG_START).filter(|stack| !stack.is_empty()) {
+        for stack in player_menu(&inventory)
+            .slots()
+            .iter()
+            .skip(BAG_START)
+            .filter(|stack| !stack.is_empty())
+        {
             *held.entry(path(stack.kind())).or_insert(0) += stack.count();
         }
     }
@@ -201,7 +231,9 @@ fn simple(client: &Client) -> HashMap<ItemKind, i32> {
     if let Some(inventory) = client.get_component::<Inventory>() {
         for stack in player_menu(&inventory).slots() {
             let plain = stack.get_component::<CustomName>().is_none()
-                && stack.get_component::<Enchantments>().is_none_or(|enchantments| enchantments.levels.is_empty())
+                && stack
+                    .get_component::<Enchantments>()
+                    .is_none_or(|enchantments| enchantments.levels.is_empty())
                 && stack.get_component::<Damage>().is_none_or(|damage| damage.amount == 0);
             if !stack.is_empty() && plain {
                 *simple.entry(stack.kind()).or_insert(0) += stack.count();
@@ -222,7 +254,10 @@ fn nearest_table(client: &Client, radius: i32) -> Option<BlockPos> {
         for y in -radius..=radius {
             for z in -radius..=radius {
                 let at = BlockPos::new(feet.x + x, feet.y + y, feet.z + z);
-                if world.get_block_state(at).is_some_and(|state| BlockKind::from(state) == BlockKind::CraftingTable) {
+                if world
+                    .get_block_state(at)
+                    .is_some_and(|state| BlockKind::from(state) == BlockKind::CraftingTable)
+                {
                     let distance = x * x + y * y + z * z;
                     if nearest.is_none_or(|(best, _)| distance < best) {
                         nearest = Some((distance, at));
@@ -235,7 +270,11 @@ fn nearest_table(client: &Client, radius: i32) -> Option<BlockPos> {
 }
 
 /// Fewest missing ingredients first, which is what a caller is told to go and get.
-fn by_shortfall<'a>(book: &Book, held: &HashMap<&'static str, i32>, mut entries: Vec<&'a RecipeDisplayEntry>) -> Vec<&'a RecipeDisplayEntry> {
+fn by_shortfall<'a>(
+    book: &Book,
+    held: &HashMap<&'static str, i32>,
+    mut entries: Vec<&'a RecipeDisplayEntry>,
+) -> Vec<&'a RecipeDisplayEntry> {
     entries.sort_by_key(|entry| missing(held, &book.ingredients(entry)).len());
     entries
 }
@@ -256,7 +295,8 @@ pub const CAN_CRAFT: Tool = Tool {
                     });
                 };
                 let missing = missing(&held, &book.ingredients(closest));
-                let needs_table = requires_table(&closest.display) && nearest_table(&game.client, TABLE_IN_REACH).is_none();
+                let needs_table =
+                    requires_table(&closest.display) && nearest_table(&game.client, TABLE_IN_REACH).is_none();
                 json!({
                     "item": item,
                     "onlyWhatTheBotKnows": true,
@@ -281,8 +321,10 @@ pub const GET_RECIPE: Tool = Tool {
 
             let data = alive(&bot, |game| {
                 let (book, held) = (book(&game.client), held(&game.client));
-                let recipes: Vec<Value> =
-                    by_shortfall(&book, &held, book.producing(&item)).iter().map(|entry| book.describe(entry, &held)).collect();
+                let recipes: Vec<Value> = by_shortfall(&book, &held, book.producing(&item))
+                    .iter()
+                    .map(|entry| book.describe(entry, &held))
+                    .collect();
                 json!({
                     "item": item,
                     "tableInReach": nearest_table(&game.client, TABLE_IN_REACH).is_some(),
@@ -311,8 +353,10 @@ pub const LIST_RECIPES: Tool = Tool {
                 let table_in_reach = nearest_table(&game.client, TABLE_IN_REACH).is_some();
 
                 if let Some(item) = &item {
-                    let recipes: Vec<Value> =
-                        by_shortfall(&book, &held, book.producing(item)).iter().map(|entry| book.describe(entry, &held)).collect();
+                    let recipes: Vec<Value> = by_shortfall(&book, &held, book.producing(item))
+                        .iter()
+                        .map(|entry| book.describe(entry, &held))
+                        .collect();
                     return json!({
                         "tableInReach": table_in_reach, "onlyWhatTheBotKnows": true, "item": item,
                         "stoppedAt": null, "recipes": recipes,
@@ -354,7 +398,9 @@ pub const CRAFT_ITEM: Tool = Tool {
             let asked = text(&args, "outputItem")?.to_owned();
             let amount = integer(&args, "amount", 1)?;
 
-            let output = item(&asked).ok_or_else(|| Failure::refused("NO_SUCH_ITEM", format!("\"{asked}\" is not an item in this version.")))?;
+            let output = item(&asked).ok_or_else(|| {
+                Failure::refused("NO_SUCH_ITEM", format!("\"{asked}\" is not an item in this version."))
+            })?;
             let name = path(output);
 
             let (recipe, before, table) = alive(&bot, |game| {
@@ -368,7 +414,9 @@ pub const CRAFT_ITEM: Tool = Tool {
                 if !book.can_craft(&recipe, &simple(&game.client)) {
                     return Err(Failure::refused(
                         "MISSING_INGREDIENTS",
-                        format!("Cannot craft {name}. The recipe is known but the ingredients are not all in the inventory."),
+                        format!(
+                            "Cannot craft {name}. The recipe is known but the ingredients are not all in the inventory."
+                        ),
                     ));
                 }
                 let table = nearest_table(&game.client, TABLE_SEARCH);
@@ -383,15 +431,22 @@ pub const CRAFT_ITEM: Tool = Tool {
                 Ok((recipe, count(&game.client, output), table))
             })??;
 
-            let mut open_table = TableWindow { bot: &bot, window: None };
+            let mut open_table = TableWindow {
+                bot: &bot,
+                window: None,
+            };
             let window = match table {
                 None => 0,
                 Some(table) => {
                     approach(&bot, table).await?;
-                    alive(&bot, |game| use_item_on(&game.client, table, Direction::Up, table.center()))?;
+                    alive(&bot, |game| {
+                        use_item_on(&game.client, table, Direction::Up, table.center())
+                    })?;
                     let window = loop {
                         tick(&bot).await;
-                        if let Some(window) = in_world(&bot, |game| menu(&game.client).filter(|window| matches!(window.menu, Menu::Crafting { .. })))? {
+                        if let Some(window) = in_world(&bot, |game| {
+                            menu(&game.client).filter(|window| matches!(window.menu, Menu::Crafting { .. }))
+                        })? {
                             break window.id;
                         }
                     };
@@ -407,8 +462,18 @@ pub const CRAFT_ITEM: Tool = Tool {
                 while in_world(&bot, |game| result_empty(&game.client, window))? {
                     waited += 1;
                     if waited > PATIENCE_TICKS {
-                        let before = if made == 0 { String::new() } else { format!(" {} were made before that.", made as i32 * per_craft(&bot, &recipe, output)) };
-                        return Err(Failure::refused("NOTHING_CRAFTED", format!("The server placed {name}'s recipe but no result appeared.{before}")));
+                        let before = if made == 0 {
+                            String::new()
+                        } else {
+                            format!(
+                                " {} were made before that.",
+                                made as i32 * per_craft(&bot, &recipe, output)
+                            )
+                        };
+                        return Err(Failure::refused(
+                            "NOTHING_CRAFTED",
+                            format!("The server placed {name}'s recipe but no result appeared.{before}"),
+                        ));
                     }
                     tick(&bot).await;
                 }
@@ -429,7 +494,9 @@ pub const CRAFT_ITEM: Tool = Tool {
             }
             Err(Failure::refused(
                 "NOTHING_CRAFTED",
-                format!("Nothing was crafted. The recipe for {name} was found and placed, but the inventory did not gain any."),
+                format!(
+                    "Nothing was crafted. The recipe for {name} was found and placed, but the inventory did not gain any."
+                ),
             ))
         })
     },
@@ -466,13 +533,20 @@ fn item(name: &str) -> Option<ItemKind> {
 /// The recipe the book holds for this item, preferring one that fits the player's own grid.
 fn known(book: &Book, item: &str) -> Option<RecipeDisplayEntry> {
     let producing = book.producing(item);
-    producing.iter().find(|entry| !requires_table(&entry.display)).or(producing.first()).map(|entry| (*entry).clone())
+    producing
+        .iter()
+        .find(|entry| !requires_table(&entry.display))
+        .or(producing.first())
+        .map(|entry| (*entry).clone())
 }
 
 fn per_craft(bot: &Bot, recipe: &RecipeDisplayEntry, output: ItemKind) -> i32 {
     in_world(bot, |game| {
         let book = book(&game.client);
-        stacks_of(result(&recipe.display), &book.known).iter().find(|(item, _)| *item == output).map_or(1, |(_, count)| *count)
+        stacks_of(result(&recipe.display), &book.known)
+            .iter()
+            .find(|(item, _)| *item == output)
+            .map_or(1, |(_, count)| *count)
     })
     .unwrap_or(1)
 }
@@ -480,7 +554,13 @@ fn per_craft(bot: &Bot, recipe: &RecipeDisplayEntry, output: ItemKind) -> i32 {
 /// How many of the item are in the bag and on the hotbar.
 fn count(client: &Client, item: ItemKind) -> i32 {
     client.get_component::<Inventory>().map_or(0, |inventory| {
-        player_menu(&inventory).slots().iter().skip(BAG_START).filter(|stack| stack.kind() == item).map(ItemStack::count).sum()
+        player_menu(&inventory)
+            .slots()
+            .iter()
+            .skip(BAG_START)
+            .filter(|stack| stack.kind() == item)
+            .map(ItemStack::count)
+            .sum()
     })
 }
 
@@ -492,5 +572,9 @@ fn result_empty(client: &Client, window: i32) -> bool {
 
 /// Ask the server to lay a recipe into the grid, by the id the recipe book gave it.
 fn place(client: &Client, window: i32, recipe: u32) {
-    client.write_packet(ServerboundPlaceRecipe { container_id: window, recipe, shift_down: false });
+    client.write_packet(ServerboundPlaceRecipe {
+        container_id: window,
+        recipe,
+        shift_down: false,
+    });
 }

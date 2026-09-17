@@ -41,7 +41,10 @@ pub const PRESS_DIALOG_BUTTON: Tool = Tool {
                 })?;
 
                 let pressed = button.label.clone();
-                let ran = button.action.as_ref().map(|action| run(&game.client, hud.commands.as_ref(), open, action, &pressed));
+                let ran = button
+                    .action
+                    .as_ref()
+                    .map(|action| run(&game.client, hud.commands.as_ref(), open, action, &pressed));
                 let stays = open.stays_open_after();
                 let screen = open.screen();
 
@@ -75,7 +78,10 @@ pub const SET_DIALOG_INPUT: Tool = Tool {
             let (data, feed) = in_world(&bot, |game| {
                 let mut hud = game.hud.borrow_mut();
                 let Some(open) = hud.dialog.as_mut() else {
-                    return Err(Failure::refused("NO_DIALOG", "no dialog is open, so there is no input to set"));
+                    return Err(Failure::refused(
+                        "NO_DIALOG",
+                        "no dialog is open, so there is no input to set",
+                    ));
                 };
                 let inputs = open.inputs();
                 let input = inputs.iter().find(|input| input.key == key).ok_or_else(|| {
@@ -86,7 +92,11 @@ pub const SET_DIALOG_INPUT: Tool = Tool {
                         } else {
                             format!(
                                 "the dialog has no input \"{key}\"; its inputs are {}",
-                                inputs.iter().map(|input| input.key.as_str()).collect::<Vec<_>>().join(", ")
+                                inputs
+                                    .iter()
+                                    .map(|input| input.key.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
                             )
                         },
                     )
@@ -102,12 +112,21 @@ pub const SET_DIALOG_INPUT: Tool = Tool {
                     }
                     Kind::Choice { entries } => {
                         let Value::String(asked) = &wanted else {
-                            return Err(wrong_type(&key, "a cycle", "the id or the text of one of its options", &wanted));
+                            return Err(wrong_type(
+                                &key,
+                                "a cycle",
+                                "the id or the text of one of its options",
+                                &wanted,
+                            ));
                         };
                         let chosen = entries
                             .iter()
                             .find(|entry| entry.id == *asked)
-                            .or_else(|| entries.iter().find(|entry| entry.display.to_lowercase() == asked.to_lowercase()))
+                            .or_else(|| {
+                                entries
+                                    .iter()
+                                    .find(|entry| entry.display.to_lowercase() == asked.to_lowercase())
+                            })
                             .ok_or_else(|| {
                                 Failure::refused(
                                     "NO_SUCH_OPTION",
@@ -121,7 +140,12 @@ pub const SET_DIALOG_INPUT: Tool = Tool {
                                     ),
                                 )
                             })?;
-                        ("single_option", Held::Choice(chosen.id.clone()), json!(chosen.display), Value::Null)
+                        (
+                            "single_option",
+                            Held::Choice(chosen.id.clone()),
+                            json!(chosen.display),
+                            Value::Null,
+                        )
                     }
                     Kind::Slider(range) => {
                         let Some(asked) = wanted.as_f64().map(|number| number as f32) else {
@@ -141,10 +165,18 @@ pub const SET_DIALOG_INPUT: Tool = Tool {
                         }
                         /* Where a drag would leave the handle, and then the number the slider sends from there. */
                         let now = range.scaled(range.to_slider(asked));
-                        ("number_range", Held::Slider(now), Value::Null, if now == asked { Value::Null } else { json!(asked) })
+                        (
+                            "number_range",
+                            Held::Slider(now),
+                            Value::Null,
+                            if now == asked { Value::Null } else { json!(asked) },
+                        )
                     }
                     Kind::Text { .. } => {
-                        return Err(Failure::refused("TEXT_INPUT", format!("\"{key}\" is a text field; type into it with type-text")));
+                        return Err(Failure::refused(
+                            "TEXT_INPUT",
+                            format!("\"{key}\" is a text field; type into it with type-text"),
+                        ));
                     }
                     Kind::Unknown => {
                         return Err(Failure::refused(
@@ -180,7 +212,13 @@ pub const SET_DIALOG_INPUT: Tool = Tool {
 
 /// Run what a dialog button is bound to. True when the client would have asked to confirm the
 /// command first -- and been told yes -- which the reply says the way the other kind of bot does.
-pub fn run(client: &Client, commands: Option<&ClientboundCommands>, open: &Open, action: &Value, label: &str) -> Result<bool, Failure> {
+pub fn run(
+    client: &Client,
+    commands: Option<&ClientboundCommands>,
+    open: &Open,
+    action: &Value,
+    label: &str,
+) -> Result<bool, Failure> {
     match open.action(action) {
         Action::Command(command) => {
             let command = command.strip_prefix('/').unwrap_or(&command).to_owned();
@@ -221,13 +259,21 @@ fn custom_click(client: &Client, id: &str, payload: Option<&NbtTag>) -> Result<(
     }
 
     let mut packet = Vec::new();
-    let _ = ServerboundCustomClickAction { id: id.clone(), payload: Nbt::None }.into_variant().id().azalea_write_var(&mut packet);
+    let _ = ServerboundCustomClickAction {
+        id: id.clone(),
+        payload: Nbt::None,
+    }
+    .into_variant()
+    .id()
+    .azalea_write_var(&mut packet);
     let _ = id.azalea_write(&mut packet);
     let _ = (tag.len() as u32).azalea_write_var(&mut packet);
     packet.extend_from_slice(&tag);
 
     client
-        .with_raw_connection_mut(|mut connection| connection.net_conn().map(|network| network.write_raw(&packet).is_ok()))
+        .with_raw_connection_mut(|mut connection| {
+            connection.net_conn().map(|network| network.write_raw(&packet).is_ok())
+        })
         .filter(|written| *written)
         .map(|_| ())
         .ok_or_else(Failure::not_in_game)
@@ -260,7 +306,13 @@ fn verify(tree: Option<&ClientboundCommands>, command: &str) -> Check {
     }
 }
 
-fn walk(tree: &ClientboundCommands, at: usize, tokens: &[&str], signed: bool, restricted: bool) -> Option<(bool, bool)> {
+fn walk(
+    tree: &ClientboundCommands,
+    at: usize,
+    tokens: &[&str],
+    signed: bool,
+    restricted: bool,
+) -> Option<(bool, bool)> {
     let node = tree.entries.get(at)?;
     if tokens.is_empty() {
         return node.is_executable.then_some((signed, restricted));
@@ -274,17 +326,28 @@ fn walk(tree: &ClientboundCommands, at: usize, tokens: &[&str], signed: bool, re
         let next = tree.entries.get(child as usize)?;
         if let NodeType::Literal { name } = &next.node_type
             && name == tokens[0]
-            && let Some(found) = walk(tree, child as usize, &tokens[1..], signed, restricted || next.is_restricted)
+            && let Some(found) = walk(
+                tree,
+                child as usize,
+                &tokens[1..],
+                signed,
+                restricted || next.is_restricted,
+            )
         {
             return Some(found);
         }
     }
     for &child in children {
         let next = tree.entries.get(child as usize)?;
-        let NodeType::Argument { parser, .. } = &next.node_type else { continue };
+        let NodeType::Argument { parser, .. } = &next.node_type else {
+            continue;
+        };
         let restricted = restricted || next.is_restricted;
 
-        if matches!(parser, BrigadierParser::Message | BrigadierParser::String(BrigadierString::GreedyPhrase)) {
+        if matches!(
+            parser,
+            BrigadierParser::Message | BrigadierParser::String(BrigadierString::GreedyPhrase)
+        ) {
             if next.is_executable {
                 return Some((signed || matches!(parser, BrigadierParser::Message), restricted));
             }
@@ -312,10 +375,13 @@ pub fn pick_by<'a, T>(items: &'a [T], label: &str, shown: impl Fn(&T) -> &str) -
         .or_else(|| items.iter().find(|item| shown(item).to_lowercase().contains(&lowered)))
 }
 
-
 pub fn offered<'a>(labels: impl Iterator<Item = &'a str>) -> String {
     let quoted: Vec<String> = labels.map(|label| format!("\"{label}\"")).collect();
-    if quoted.is_empty() { "none".to_owned() } else { quoted.join(", ") }
+    if quoted.is_empty() {
+        "none".to_owned()
+    } else {
+        quoted.join(", ")
+    }
 }
 
 fn held(held: &Held) -> Value {
@@ -327,5 +393,8 @@ fn held(held: &Held) -> Value {
 }
 
 fn wrong_type(key: &str, what: &str, takes: &str, got: &Value) -> Failure {
-    Failure::refused("WRONG_VALUE_TYPE", format!("\"{key}\" is {what} and takes {takes}, not {got}"))
+    Failure::refused(
+        "WRONG_VALUE_TYPE",
+        format!("\"{key}\" is {what} and takes {takes}, not {got}"),
+    )
 }

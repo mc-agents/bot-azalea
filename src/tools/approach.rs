@@ -40,7 +40,13 @@ pub struct Approach {
 
 impl Approach {
     pub fn new() -> Approach {
-        Approach { walking: None, since_sent: 0, ended_short: false, noted: None, stuck_ticks: 0 }
+        Approach {
+            walking: None,
+            since_sent: 0,
+            ended_short: false,
+            noted: None,
+            stuck_ticks: 0,
+        }
     }
 
     pub fn reached(&mut self, bot: &Bot, target: Vec3, what: &str) -> Result<bool, Failure> {
@@ -56,7 +62,10 @@ impl Approach {
 
         self.since_sent += 1;
         let idle = client.is_goto_target_reached();
-        let moved = self.walking.as_ref().is_none_or(|(_, goal)| goal.distance_to(target) > FOLLOW);
+        let moved = self
+            .walking
+            .as_ref()
+            .is_none_or(|(_, goal)| goal.distance_to(target) > FOLLOW);
 
         if moved || idle && self.since_sent >= REPLAN_TICKS {
             self.ended_short |= !moved;

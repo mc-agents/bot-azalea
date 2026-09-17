@@ -19,13 +19,23 @@ pub async fn serve(bot: Rc<Bot>) {
     };
 
     loop {
-        let Ok((mut stream, _)) = listener.accept().await else { continue };
+        let Ok((mut stream, _)) = listener.accept().await else {
+            continue;
+        };
         let mut request = [0u8; 256];
         let read = stream.read(&mut request).await.unwrap_or(0);
         let line = String::from_utf8_lossy(&request[..read]);
 
-        let ok = if line.starts_with("GET /readyz") { bot.linked() } else { line.starts_with("GET /healthz") };
-        let response = if ok { "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok" } else { "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\n\r\n" };
+        let ok = if line.starts_with("GET /readyz") {
+            bot.linked()
+        } else {
+            line.starts_with("GET /healthz")
+        };
+        let response = if ok {
+            "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok"
+        } else {
+            "HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\n\r\n"
+        };
         let _ = stream.write_all(response.as_bytes()).await;
     }
 }

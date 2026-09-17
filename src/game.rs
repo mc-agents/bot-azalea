@@ -101,7 +101,9 @@ impl Game {
                 status["causeOfDeath"] = json!(cause);
             }
             status["gameMode"] = json!(crate::tools::game_mode(
-                self.client.get_component::<azalea::local_player::LocalGameMode>().map(|mode| mode.current)
+                self.client
+                    .get_component::<azalea::local_player::LocalGameMode>()
+                    .map(|mode| mode.current)
             ));
             if let Some((_, dimension)) = self.hud.borrow().dimension() {
                 status["dimension"] = json!(dimension.to_string());
@@ -121,7 +123,10 @@ fn notice_world(bot: &Rc<Bot>, generation: u64) {
 
     let seen = {
         let game = bot.game.borrow();
-        let Some(game) = game.as_ref().filter(|game| game.generation == generation && game.spawned()) else {
+        let Some(game) = game
+            .as_ref()
+            .filter(|game| game.generation == generation && game.spawned())
+        else {
             *bot.reported.borrow_mut() = None;
             return;
         };
@@ -153,9 +158,16 @@ fn ecs() -> Arc<RwLock<World>> {
         let mut app = App::new();
         app.add_plugins((
             DefaultPlugins.set(TaskPoolPlugin {
-                task_pool_options: TaskPoolOptions { min_total_threads: 1, max_total_threads: 1, ..Default::default() },
+                task_pool_options: TaskPoolOptions {
+                    min_total_threads: 1,
+                    max_total_threads: 1,
+                    ..Default::default()
+                },
             }),
-            DefaultBotPlugins.build().disable::<AutoRespawnPlugin>().disable::<AutoReconnectPlugin>(),
+            DefaultBotPlugins
+                .build()
+                .disable::<AutoRespawnPlugin>()
+                .disable::<AutoReconnectPlugin>(),
             DefaultSwarmPlugins,
             HudPlugin,
             MenusPlugin,
@@ -193,11 +205,14 @@ async fn join(bot: Rc<Bot>, host: String, port: u16, username: String, spawn_tim
     static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-    let client = start(Account::offline(&username), ConnectOpts {
-        address: resolved,
-        server_proxy: None,
-        sessionserver_proxy: None,
-    })
+    let client = start(
+        Account::offline(&username),
+        ConnectOpts {
+            address: resolved,
+            server_proxy: None,
+            sessionserver_proxy: None,
+        },
+    )
     .await;
     let (events, receiver) = mpsc::unbounded_channel();
     let (packets, hud_packets) = mpsc::unbounded_channel();
@@ -206,12 +221,16 @@ async fn join(bot: Rc<Bot>, host: String, port: u16, username: String, spawn_tim
     from the connection before is taken off here: the pump reads the profile's presence as this
     connection's login having finished.
     */
-    ecs().write().entity_mut(client.entity).remove::<GameProfileComponent>().insert((
-        LocalPlayerEvents(events),
-        HudPackets(packets),
-        Menus::default(),
-        Known::default(),
-    ));
+    ecs()
+        .write()
+        .entity_mut(client.entity)
+        .remove::<GameProfileComponent>()
+        .insert((
+            LocalPlayerEvents(events),
+            HudPackets(packets),
+            Menus::default(),
+            Known::default(),
+        ));
 
     let (alive, ended) = oneshot::channel();
     *bot.game.borrow_mut() = Some(Game {
@@ -257,7 +276,10 @@ async fn start(account: Account, connect_opts: ConnectOpts) -> Client {
         start_join_callback_tx: Some(callback),
     });
 
-    let entity = entity.recv().await.expect("azalea drops the join callback only when its ECS has stopped");
+    let entity = entity
+        .recv()
+        .await
+        .expect("azalea drops the join callback only when its ECS has stopped");
     Client::new(entity, ecs)
 }
 
@@ -273,11 +295,16 @@ pub fn disconnect(bot: &Rc<Bot>, message: &Value) {
 }
 
 fn leave(bot: &Bot) {
-    let Some(game) = bot.game.borrow_mut().take() else { return };
+    let Some(game) = bot.game.borrow_mut().take() else {
+        return;
+    };
     game.leaving.set(true);
     game.client.disconnect();
     feeds::close_all(bot);
-    *bot.departing.borrow_mut() = Some(Departing { client: game.client, ended: game.ended });
+    *bot.departing.borrow_mut() = Some(Departing {
+        client: game.client,
+        ended: game.ended,
+    });
 }
 
 /// Wait until the connection the last leave ended is gone from azalea: its pump has seen the
@@ -286,7 +313,9 @@ fn leave(bot: &Bot) {
 /// The pump ending is the disconnect event, which azalea sends from the frame that removes the
 /// connection; the component check covers the event arriving before that frame has applied it.
 async fn torn_down(bot: &Bot) {
-    let Some(Departing { client, ended }) = bot.departing.borrow_mut().take() else { return };
+    let Some(Departing { client, ended }) = bot.departing.borrow_mut().take() else {
+        return;
+    };
     let deadline = tokio::time::Instant::now() + TEARDOWN;
 
     let _ = tokio::time::timeout_at(deadline, ended).await;
@@ -306,7 +335,12 @@ async fn pump(
 ) {
     let mut joined = Some(joined);
     let mut logged_in = false;
-    let mine = |bot: &Bot| bot.game.borrow().as_ref().is_some_and(|game| game.generation == generation);
+    let mine = |bot: &Bot| {
+        bot.game
+            .borrow()
+            .as_ref()
+            .is_some_and(|game| game.generation == generation)
+    };
 
     loop {
         let event = tokio::select! {
@@ -363,7 +397,9 @@ async fn pump(
                 break;
             }
             Event::Disconnect(reason) => {
-                let reason = reason.map(|text| text.to_string()).unwrap_or_else(|| "disconnected".into());
+                let reason = reason
+                    .map(|text| text.to_string())
+                    .unwrap_or_else(|| "disconnected".into());
                 let dropped = mine(&bot) && !bot.game.borrow().as_ref().is_some_and(|game| game.leaving.get());
 
                 if let Some(joined) = joined.take() {
@@ -374,10 +410,17 @@ async fn pump(
                     -- a plugin, a transfer -- has sent no event that says so. The profile the
                     login handshake put on the entity says it, and a disconnect leaves it there.
                     */
-                    let profile = bot.game.borrow().as_ref().filter(|game| game.generation == generation).is_some_and(|game| {
-                        game.client.get_component::<GameProfileComponent>().is_some()
-                    });
-                    let code = if logged_in || profile { "JOIN_FAILED_SPAWN" } else { "JOIN_FAILED_LOGIN" };
+                    let profile = bot
+                        .game
+                        .borrow()
+                        .as_ref()
+                        .filter(|game| game.generation == generation)
+                        .is_some_and(|game| game.client.get_component::<GameProfileComponent>().is_some());
+                    let code = if logged_in || profile {
+                        "JOIN_FAILED_SPAWN"
+                    } else {
+                        "JOIN_FAILED_LOGIN"
+                    };
                     let _ = joined.send(Err(Failure::refused(code, reason.clone())));
                 } else if dropped {
                     bot.status("disconnected", Some(&reason));

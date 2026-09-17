@@ -9,22 +9,22 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use azalea::app::{App, Plugin, Update};
+use azalea::block::BlockTrait;
 use azalea::brigadier::suggestion::Suggestions;
 use azalea::core::data_registry::ResolvableDataRegistry;
+use azalea::core::entity_id::MinecraftEntityId;
+use azalea::core::sound::CustomSound;
 use azalea::ecs::prelude::*;
 use azalea::packet::game::ReceiveGamePacketEvent;
 use azalea::protocol::packets::game::ClientboundGamePacket;
-use azalea::protocol::packets::game::c_commands::ClientboundCommands;
 use azalea::protocol::packets::game::c_boss_event::{BossBarColor, BossBarOverlay, Operation};
+use azalea::protocol::packets::game::c_commands::ClientboundCommands;
 use azalea::protocol::packets::game::c_game_event::EventType;
 use azalea::protocol::packets::game::c_set_objective::Method;
 use azalea::protocol::packets::game::c_set_player_team::{Method as TeamMethod, Parameters};
+use azalea::registry::builtin::{BlockEntityKind, BlockKind, SoundEvent};
 use azalea::registry::data::DimensionKind;
 use azalea::registry::{DataRegistry, Holder};
-use azalea::block::BlockTrait;
-use azalea::core::entity_id::MinecraftEntityId;
-use azalea::core::sound::CustomSound;
-use azalea::registry::builtin::{BlockEntityKind, BlockKind, SoundEvent};
 use azalea::{BlockPos, FormattedText, Identifier};
 use azalea_chat::base_component::BaseComponent;
 use azalea_chat::numbers::NumberFormat;
@@ -251,7 +251,11 @@ impl Hud {
             .iter()
             .filter_map(|(owner, scores)| scores.get(name).map(|score| (owner.as_str(), score)))
             .collect();
-        entries.sort_by(|a, b| b.1.value.cmp(&a.1.value).then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase())));
+        entries.sort_by(|a, b| {
+            b.1.value
+                .cmp(&a.1.value)
+                .then_with(|| a.0.to_lowercase().cmp(&b.0.to_lowercase()))
+        });
 
         let default_style = match slot {
             Slot::Sidebar => Style::default().color(TextColor::try_from(ChatFormatting::Red).ok()),
@@ -261,16 +265,23 @@ impl Hud {
         let line = |(owner, score): (&str, &Score)| {
             let name = score.display.clone().unwrap_or_else(|| FormattedText::from(owner));
             Line {
-                name: if slot == Slot::Sidebar { self.team_name(owner, name) } else { name },
+                name: if slot == Slot::Sidebar {
+                    self.team_name(owner, name)
+                } else {
+                    name
+                },
                 score: score.value,
                 value: formatted(score, objective, &default_style),
             }
         };
 
         let lines = match slot {
-            Slot::Sidebar => {
-                entries.into_iter().filter(|(owner, _)| !owner.starts_with('#')).take(SIDEBAR_LINES).map(line).collect()
-            }
+            Slot::Sidebar => entries
+                .into_iter()
+                .filter(|(owner, _)| !owner.starts_with('#'))
+                .take(SIDEBAR_LINES)
+                .map(line)
+                .collect(),
             _ => entries.into_iter().map(line).collect(),
         };
         Some((objective, lines))
@@ -303,19 +314,28 @@ impl Hud {
             }
         }
         FormattedText::Text(TextComponent {
-            base: BaseComponent { siblings: vec![team.prefix.clone(), name, team.suffix.clone()], style: Box::new(style) },
+            base: BaseComponent {
+                siblings: vec![team.prefix.clone(), name, team.suffix.clone()],
+                style: Box::new(style),
+            },
             text: String::new(),
         })
     }
 
     /// The vehicle an entity sits on, by network id.
     pub fn vehicle_of(&self, passenger: i32) -> Option<i32> {
-        self.passengers.iter().find(|(_, riders)| riders.contains(&passenger)).map(|(vehicle, _)| *vehicle)
+        self.passengers
+            .iter()
+            .find(|(_, riders)| riders.contains(&passenger))
+            .map(|(vehicle, _)| *vehicle)
     }
 
     /// Ticks until a cooldown group comes free, or None when it is free now.
     pub fn cooldown_left(&self, group: &str, ticks_now: u64) -> Option<u64> {
-        self.cooldowns.get(group).map(|end| end.saturating_sub(ticks_now)).filter(|left| *left > 0)
+        self.cooldowns
+            .get(group)
+            .map(|end| end.saturating_sub(ticks_now))
+            .filter(|left| *left > 0)
     }
 
     pub fn listed(&self, uuid: u128) -> bool {
@@ -385,7 +405,8 @@ pub fn apply(bot: &Bot, packet: &ClientboundGamePacket) {
                     i32::from(entity.y as i16),
                     p.z * 16 + i32::from(entity.packed_xz & 15),
                 );
-                hud.block_entities.keep(at, tracked(client, at, entity.kind, &entity.data));
+                hud.block_entities
+                    .keep(at, tracked(client, at, entity.kind, &entity.data));
             }
         }
         P::ForgetLevelChunk(p) => {
@@ -425,12 +446,21 @@ pub fn apply(bot: &Bot, packet: &ClientboundGamePacket) {
             let mut hud = game.hud.borrow_mut();
             let block = block_name(client, p.pos);
             let face = if p.is_front_text { "front_text" } else { "back_text" };
-            let lines = hud.block_entities.at(p.pos, &block).map(|sign| sign_face(&sign.data, face).0).unwrap_or_default();
+            let lines = hud
+                .block_entities
+                .at(p.pos, &block)
+                .map(|sign| sign_face(&sign.data, face).0)
+                .unwrap_or_default();
             let mut kept = [String::new(), String::new(), String::new(), String::new()];
             for (line, text) in kept.iter_mut().zip(lines) {
                 *line = text;
             }
-            hud.sign_editor = Some(SignEditor { at: p.pos, front: p.is_front_text, hanging: block.ends_with("hanging_sign"), lines: kept });
+            hud.sign_editor = Some(SignEditor {
+                at: p.pos,
+                front: p.is_front_text,
+                hanging: block.ends_with("hanging_sign"),
+                lines: kept,
+            });
         }
         P::Sound(p) => feeds::sound(bot, sound_id(&p.sound)),
         /* A sound played at an entity rather than at a place, which a plugin does with playSound(player, ...). */
@@ -471,7 +501,10 @@ pub fn registered_dialog(bot: &Bot, id: &str) -> Option<Value> {
     let client = &game.as_ref()?.client;
     client.with_registry_holder(|registries| {
         let entries = registries.extra.get(&Identifier::new("minecraft:dialog"))?;
-        entries.map.get(&Identifier::new(id)).and_then(|nbt| serde_json::to_value(nbt).ok())
+        entries
+            .map
+            .get(&Identifier::new(id))
+            .and_then(|nbt| serde_json::to_value(nbt).ok())
     })
 }
 
@@ -487,8 +520,20 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
 
     match packet {
         P::SetObjective(p) => match &p.method {
-            Method::Add { display_name, number_format, .. } | Method::Change { display_name, number_format, .. } => {
-                let objective = Objective { title: display_name.clone(), number_format: number_format.clone() };
+            Method::Add {
+                display_name,
+                number_format,
+                ..
+            }
+            | Method::Change {
+                display_name,
+                number_format,
+                ..
+            } => {
+                let objective = Objective {
+                    title: display_name.clone(),
+                    number_format: number_format.clone(),
+                };
                 hud.objectives.insert(p.objective_name.clone(), objective);
             }
             Method::Remove => {
@@ -509,8 +554,15 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
         }
         P::SetScore(p) => {
             /* A VarInt on the wire, which azalea reads unsigned: a negative score is two's complement. */
-            let score = Score { value: p.score as i32, display: p.display.clone(), number_format: p.number_format.clone() };
-            hud.scores.entry(p.owner.clone()).or_default().insert(p.objective_name.clone(), score);
+            let score = Score {
+                value: p.score as i32,
+                display: p.display.clone(),
+                number_format: p.number_format.clone(),
+            };
+            hud.scores
+                .entry(p.owner.clone())
+                .or_default()
+                .insert(p.objective_name.clone(), score);
         }
         P::SetPlayerTeam(p) => match &p.method {
             TeamMethod::Add((parameters, members)) => {
@@ -569,7 +621,9 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
                 }
                 Operation::Remove => hud.bars.retain(|bar| bar.id != id),
                 operation => {
-                    let Some(bar) = hud.bars.iter_mut().find(|bar| bar.id == id) else { return };
+                    let Some(bar) = hud.bars.iter_mut().find(|bar| bar.id == id) else {
+                        return;
+                    };
                     match operation {
                         Operation::UpdateProgress(progress) => bar.progress = *progress,
                         Operation::UpdateName(name) => bar.name = name.clone(),
@@ -584,11 +638,14 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
         }
         P::SetTime(p) => {
             for (clock, state) in &p.clock_updates {
-                hud.clocks.insert(clock.protocol_id(), Clock {
-                    total_ticks: state.total_ticks,
-                    rate: state.rate,
-                    at_tick: ticks,
-                });
+                hud.clocks.insert(
+                    clock.protocol_id(),
+                    Clock {
+                        total_ticks: state.total_ticks,
+                        rate: state.rate,
+                        at_tick: ticks,
+                    },
+                );
             }
         }
         P::GameEvent(p) => match p.event {
@@ -600,15 +657,13 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
             EventType::WinGame => hud.credits = true,
             _ => {}
         },
-        P::PlayerInfoUpdate(p) => {
-            if p.actions.update_listed {
-                for entry in &p.entries {
-                    let uuid = entry.profile.uuid.as_u128();
-                    if entry.listed {
-                        hud.listed.insert(uuid);
-                    } else {
-                        hud.listed.remove(&uuid);
-                    }
+        P::PlayerInfoUpdate(p) if p.actions.update_listed => {
+            for entry in &p.entries {
+                let uuid = entry.profile.uuid.as_u128();
+                if entry.listed {
+                    hud.listed.insert(uuid);
+                } else {
+                    hud.listed.remove(&uuid);
                 }
             }
         }
@@ -616,7 +671,8 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
             if p.passengers.is_empty() {
                 hud.passengers.remove(&p.vehicle.0);
             } else {
-                hud.passengers.insert(p.vehicle.0, p.passengers.iter().map(|id| id.0).collect());
+                hud.passengers
+                    .insert(p.vehicle.0, p.passengers.iter().map(|id| id.0).collect());
             }
         }
         P::Cooldown(p) => {
@@ -646,7 +702,12 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
             through a proxy would otherwise show the last backend's sidebar on the next one.
             */
             let logins = hud.logins + 1;
-            *hud = Hud { logins, player_id: Some(p.player_id), signed_chat_only: p.enforces_secure_chat, ..Hud::default() };
+            *hud = Hud {
+                logins,
+                player_id: Some(p.player_id),
+                signed_chat_only: p.enforces_secure_chat,
+                ..Hud::default()
+            };
             hud.dimension = Some((p.common.dimension_type, p.common.dimension.clone()));
         }
         P::Respawn(p) => {
@@ -683,7 +744,10 @@ fn formatted(score: &Score, objective: &Objective, default_style: &Style) -> For
 }
 
 fn styled(value: i32, style: &Style) -> FormattedText {
-    FormattedText::Text(TextComponent { base: BaseComponent::new().with_style(style.clone()), text: value.to_string() })
+    FormattedText::Text(TextComponent {
+        base: BaseComponent::new().with_style(style.clone()),
+        text: value.to_string(),
+    })
 }
 
 /// A style as a styled number format carries it, which is network NBT: the colour and the font by
@@ -701,12 +765,25 @@ fn nbt_style(nbt: &simdnbt::owned::Nbt) -> Style {
 }
 
 fn tracked(client: &azalea::Client, at: BlockPos, kind: BlockEntityKind, data: &simdnbt::owned::Nbt) -> Tracked {
-    let block = client.world().read().get_block_state(at).map(|state| BlockKind::from(state).to_str().to_owned());
-    Tracked { kind: kind.to_str().to_owned(), block, data: serde_json::to_value(data).unwrap_or_default() }
+    let block = client
+        .world()
+        .read()
+        .get_block_state(at)
+        .map(|state| BlockKind::from(state).to_str().to_owned());
+    Tracked {
+        kind: kind.to_str().to_owned(),
+        block,
+        data: serde_json::to_value(data).unwrap_or_default(),
+    }
 }
 
 pub fn block_name(client: &azalea::Client, at: BlockPos) -> String {
-    client.world().read().get_block_state(at).map(|state| BlockKind::from(state).to_str().to_owned()).unwrap_or_default()
+    client
+        .world()
+        .read()
+        .get_block_state(at)
+        .map(|state| BlockKind::from(state).to_str().to_owned())
+        .unwrap_or_default()
 }
 
 /// The dialog a packet means, as JSON.
@@ -721,7 +798,9 @@ fn dialog(bot: &Bot, dialog: &Holder<azalea::registry::data::Dialog, simdnbt::ow
             let game = bot.game.borrow();
             let client = &game.as_ref()?.client;
             client.with_registry_holder(|registries| {
-                entry.resolve(registries).and_then(|(_, nbt)| serde_json::to_value(nbt).ok())
+                entry
+                    .resolve(registries)
+                    .and_then(|(_, nbt)| serde_json::to_value(nbt).ok())
             })
         }
     }
@@ -736,7 +815,9 @@ mod tests {
     use azalea::core::objectives::ObjectiveCriteria;
     use azalea::protocol::packets::game::c_set_display_objective::DisplaySlot;
     use azalea::protocol::packets::game::c_set_objective::Method;
-    use azalea::protocol::packets::game::c_set_player_team::{CollisionRule, Method as TeamMethod, NameTagVisibility, Parameters};
+    use azalea::protocol::packets::game::c_set_player_team::{
+        CollisionRule, Method as TeamMethod, NameTagVisibility, Parameters,
+    };
     use azalea::protocol::packets::game::{
         ClientboundGamePacket, ClientboundSetDisplayObjective, ClientboundSetObjective, ClientboundSetPlayerTeam,
         ClientboundSetScore,
@@ -768,14 +849,27 @@ mod tests {
     #[test]
     fn an_objective_without_a_number_format_sends_the_presence_boolean_alone() {
         let packet = read_objective(&set_objective(2, &[0]));
-        assert!(matches!(packet.method, Method::Change { number_format: None, .. }));
+        assert!(matches!(
+            packet.method,
+            Method::Change {
+                number_format: None,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn a_fixed_number_format_follows_its_presence_boolean_and_kind() {
         let packet = read_objective(&set_objective(0, &[1, 2, 0x08, 0, 3, b'5', b'0', b'g']));
-        let Method::Add { number_format, .. } = packet.method else { panic!("not an add") };
-        assert_eq!(number_format, Some(NumberFormat::Fixed { value: FormattedText::from("50g") }));
+        let Method::Add { number_format, .. } = packet.method else {
+            panic!("not an add")
+        };
+        assert_eq!(
+            number_format,
+            Some(NumberFormat::Fixed {
+                value: FormattedText::from("50g")
+            })
+        );
     }
 
     /// The style is network NBT, whose root compound carries no name.
@@ -788,11 +882,18 @@ mod tests {
         number_format.extend_from_slice(&nbt);
 
         let packet = read_objective(&set_objective(0, &number_format));
-        let Method::Add { number_format: Some(NumberFormat::Styled { style }), .. } = packet.method else {
+        let Method::Add {
+            number_format: Some(NumberFormat::Styled { style }),
+            ..
+        } = packet.method
+        else {
             panic!("not styled")
         };
         assert_eq!(nbt_style(&style).color, TextColor::try_from(ChatFormatting::Red).ok());
-        assert_eq!(nbt_style(&simdnbt::owned::Nbt::None), azalea_chat::style::Style::default());
+        assert_eq!(
+            nbt_style(&simdnbt::owned::Nbt::None),
+            azalea_chat::style::Style::default()
+        );
     }
 
     fn apply(hud: &mut Hud, packets: Vec<ClientboundGamePacket>) {
@@ -804,12 +905,19 @@ mod tests {
     fn objective(name: &str, number_format: Option<NumberFormat>) -> ClientboundGamePacket {
         ClientboundGamePacket::SetObjective(ClientboundSetObjective {
             objective_name: name.into(),
-            method: Method::Add { display_name: FormattedText::from(name), render_type: ObjectiveCriteria::Integer, number_format },
+            method: Method::Add {
+                display_name: FormattedText::from(name),
+                render_type: ObjectiveCriteria::Integer,
+                number_format,
+            },
         })
     }
 
     fn display(slot: DisplaySlot, objective: &str) -> ClientboundGamePacket {
-        ClientboundGamePacket::SetDisplayObjective(ClientboundSetDisplayObjective { slot, objective_name: objective.into() })
+        ClientboundGamePacket::SetDisplayObjective(ClientboundSetDisplayObjective {
+            slot,
+            objective_name: objective.into(),
+        })
     }
 
     fn score(owner: &str, objective: &str, value: i32) -> ClientboundGamePacket {
@@ -835,28 +943,48 @@ mod tests {
     }
 
     fn team(name: &str, method: TeamMethod) -> ClientboundGamePacket {
-        ClientboundGamePacket::SetPlayerTeam(ClientboundSetPlayerTeam { name: name.into(), method })
+        ClientboundGamePacket::SetPlayerTeam(ClientboundSetPlayerTeam {
+            name: name.into(),
+            method,
+        })
     }
 
     fn quest_log() -> Hud {
         let mut hud = Hud::default();
-        apply(&mut hud, vec![
-            objective("lines", Some(NumberFormat::Blank)),
-            display(DisplaySlot::Sidebar, "lines"),
-            team("l3", TeamMethod::Add((parameters("Harvest wheat", "3/10", ChatFormatting::Reset), vec!["§7".into()]))),
-            score("§7", "lines", 3),
-            team("l2", TeamMethod::Add((parameters("", "", ChatFormatting::Gray), vec!["§8".into()]))),
-            score("§8", "lines", 2),
-            team("l1", TeamMethod::Add((parameters("» ", "", ChatFormatting::Reset), vec!["§9".into()]))),
-            ClientboundGamePacket::SetScore(ClientboundSetScore {
-                owner: "§9".into(),
-                objective_name: "lines".into(),
-                score: 1,
-                display: Some(FormattedText::from("Reward")),
-                number_format: Some(NumberFormat::Fixed { value: FormattedText::from("50g") }),
-            }),
-            score("#hidden", "lines", 9),
-        ]);
+        apply(
+            &mut hud,
+            vec![
+                objective("lines", Some(NumberFormat::Blank)),
+                display(DisplaySlot::Sidebar, "lines"),
+                team(
+                    "l3",
+                    TeamMethod::Add((
+                        parameters("Harvest wheat", "3/10", ChatFormatting::Reset),
+                        vec!["§7".into()],
+                    )),
+                ),
+                score("§7", "lines", 3),
+                team(
+                    "l2",
+                    TeamMethod::Add((parameters("", "", ChatFormatting::Gray), vec!["§8".into()])),
+                ),
+                score("§8", "lines", 2),
+                team(
+                    "l1",
+                    TeamMethod::Add((parameters("» ", "", ChatFormatting::Reset), vec!["§9".into()])),
+                ),
+                ClientboundGamePacket::SetScore(ClientboundSetScore {
+                    owner: "§9".into(),
+                    objective_name: "lines".into(),
+                    score: 1,
+                    display: Some(FormattedText::from("Reward")),
+                    number_format: Some(NumberFormat::Fixed {
+                        value: FormattedText::from("50g"),
+                    }),
+                }),
+                score("#hidden", "lines", 9),
+            ],
+        );
         hud
     }
 
@@ -866,22 +994,40 @@ mod tests {
         let (objective, lines) = hud.board(Slot::Sidebar, "me").unwrap();
 
         assert_eq!(objective.title.to_string(), "lines");
-        let drawn: Vec<(String, i32, String)> =
-            lines.iter().map(|line| (line.name.to_string(), line.score, line.value.to_string())).collect();
-        assert_eq!(drawn, vec![
-            ("Harvest wheat§73/10".into(), 3, "".into()),
-            ("§8".into(), 2, "".into()),
-            ("» Reward".into(), 1, "50g".into()),
-        ]);
-        assert_eq!(component(&lines[1].name), json!({"text": "", "color": "gray", "extra": ["", "§8", ""]}));
+        let drawn: Vec<(String, i32, String)> = lines
+            .iter()
+            .map(|line| (line.name.to_string(), line.score, line.value.to_string()))
+            .collect();
+        assert_eq!(
+            drawn,
+            vec![
+                ("Harvest wheat§73/10".into(), 3, "".into()),
+                ("§8".into(), 2, "".into()),
+                ("» Reward".into(), 1, "50g".into()),
+            ]
+        );
+        assert_eq!(
+            component(&lines[1].name),
+            json!({"text": "", "color": "gray", "extra": ["", "§8", ""]})
+        );
         assert_eq!(component(&lines[0].value), json!(""));
     }
 
     #[test]
     fn the_list_and_below_name_slots_draw_every_owner_bare_with_the_slots_own_style() {
         let mut hud = quest_log();
-        apply(&mut hud, vec![objective("stats", None), display(DisplaySlot::List, "stats"), score("#hidden", "stats", 9)]);
-        apply(&mut hud, vec![display(DisplaySlot::BelowName, "lines"), score("Steve", "lines", 4)]);
+        apply(
+            &mut hud,
+            vec![
+                objective("stats", None),
+                display(DisplaySlot::List, "stats"),
+                score("#hidden", "stats", 9),
+            ],
+        );
+        apply(
+            &mut hud,
+            vec![display(DisplaySlot::BelowName, "lines"), score("Steve", "lines", 4)],
+        );
 
         let (_, lines) = hud.board(Slot::List, "me").unwrap();
         assert_eq!(lines.len(), 1);
@@ -897,8 +1043,18 @@ mod tests {
     #[test]
     fn a_sidebar_stops_at_fifteen_lines_after_leaving_out_the_hidden() {
         let mut hud = Hud::default();
-        apply(&mut hud, vec![objective("many", None), display(DisplaySlot::Sidebar, "many"), score("#top", "many", 99)]);
-        apply(&mut hud, (0..16).map(|n| score(&format!("line{n:02}"), "many", n)).collect());
+        apply(
+            &mut hud,
+            vec![
+                objective("many", None),
+                display(DisplaySlot::Sidebar, "many"),
+                score("#top", "many", 99),
+            ],
+        );
+        apply(
+            &mut hud,
+            (0..16).map(|n| score(&format!("line{n:02}"), "many", n)).collect(),
+        );
 
         let (_, lines) = hud.board(Slot::Sidebar, "me").unwrap();
         assert_eq!(lines.len(), 15);
@@ -910,12 +1066,21 @@ mod tests {
     #[test]
     fn the_sidebar_is_the_one_the_players_team_colour_names_when_that_slot_is_filled() {
         let mut hud = quest_log();
-        apply(&mut hud, vec![
-            objective("red", None),
-            display(DisplaySlot::TeamRed, "red"),
-            team("reds", TeamMethod::Add((parameters("", "", ChatFormatting::Red), vec!["me".into()]))),
-            team("bold", TeamMethod::Add((parameters("", "", ChatFormatting::Bold), vec!["other".into()]))),
-        ]);
+        apply(
+            &mut hud,
+            vec![
+                objective("red", None),
+                display(DisplaySlot::TeamRed, "red"),
+                team(
+                    "reds",
+                    TeamMethod::Add((parameters("", "", ChatFormatting::Red), vec!["me".into()])),
+                ),
+                team(
+                    "bold",
+                    TeamMethod::Add((parameters("", "", ChatFormatting::Bold), vec!["other".into()])),
+                ),
+            ],
+        );
 
         assert_eq!(hud.board(Slot::Sidebar, "me").unwrap().0.title.to_string(), "red");
         assert_eq!(hud.board(Slot::Sidebar, "other").unwrap().0.title.to_string(), "lines");
@@ -931,15 +1096,30 @@ mod tests {
 
         /* Leaving a team the entry is not on changes nothing; joining another moves it. */
         apply(&mut hud, vec![team("l2", TeamMethod::Leave(vec!["§7".into()]))]);
-        assert_eq!(hud.board(Slot::Sidebar, "me").unwrap().1[0].name.to_string(), "Harvest wheat§73/10");
+        assert_eq!(
+            hud.board(Slot::Sidebar, "me").unwrap().1[0].name.to_string(),
+            "Harvest wheat§73/10"
+        );
         apply(&mut hud, vec![team("l2", TeamMethod::Join(vec!["§7".into()]))]);
         assert_eq!(hud.board(Slot::Sidebar, "me").unwrap().1[0].name.to_string(), "§7");
         apply(&mut hud, vec![team("l2", TeamMethod::Leave(vec!["§7".into()]))]);
-        assert_eq!(component(&hud.board(Slot::Sidebar, "me").unwrap().1[0].name), json!("§7"));
+        assert_eq!(
+            component(&hud.board(Slot::Sidebar, "me").unwrap().1[0].name),
+            json!("§7")
+        );
 
         /* A change keeps the members; a removal drops them with the team. */
-        apply(&mut hud, vec![team("l1", TeamMethod::Change(parameters("- ", "", ChatFormatting::Gold)))]);
-        assert_eq!(hud.board(Slot::Sidebar, "me").unwrap().1[2].name.to_string(), "- Reward");
+        apply(
+            &mut hud,
+            vec![team(
+                "l1",
+                TeamMethod::Change(parameters("- ", "", ChatFormatting::Gold)),
+            )],
+        );
+        assert_eq!(
+            hud.board(Slot::Sidebar, "me").unwrap().1[2].name.to_string(),
+            "- Reward"
+        );
         apply(&mut hud, vec![team("l1", TeamMethod::Remove)]);
         assert_eq!(hud.board(Slot::Sidebar, "me").unwrap().1[2].name.to_string(), "Reward");
 
@@ -956,7 +1136,9 @@ mod tests {
         let mut buf = Cursor::new(bytes.as_slice());
         let packet = ClientboundSetPlayerTeam::azalea_read(&mut buf).unwrap();
         assert_eq!(buf.position(), bytes.len() as u64, "every byte of the packet is read");
-        let TeamMethod::Add((parameters, _)) = &packet.method else { panic!("not an add") };
+        let TeamMethod::Add((parameters, _)) = &packet.method else {
+            panic!("not an add")
+        };
         assert_eq!(parameters.color, ChatFormatting::Bold);
 
         let mut hud = quest_log();

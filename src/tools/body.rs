@@ -112,7 +112,8 @@ struct Held(Client);
 
 impl Held {
     fn press(&self, key: WalkDirection) {
-        self.0.query_self::<&mut PhysicsState, _>(|mut state| state.move_direction = key);
+        self.0
+            .query_self::<&mut PhysicsState, _>(|mut state| state.move_direction = key);
     }
 }
 
@@ -137,7 +138,10 @@ pub const RESPAWN: Tool = Tool {
                 let client = &game.client;
                 let dead = client.get_component::<Dead>().is_some();
                 if dead {
-                    client.ecs.write().write_message(PerformRespawnEvent { entity: client.entity });
+                    client
+                        .ecs
+                        .write()
+                        .write_message(PerformRespawnEvent { entity: client.entity });
                 }
                 (dead, BlockPos::from(client.position()))
             })?;
@@ -162,7 +166,10 @@ pub const RESPAWN: Tool = Tool {
                 let client = &game.client;
                 (
                     BlockPos::from(client.position()),
-                    client.get_component::<WorldName>().map(|name| name.0.path().to_owned()).unwrap_or_default(),
+                    client
+                        .get_component::<WorldName>()
+                        .map(|name| name.0.path().to_owned())
+                        .unwrap_or_default(),
                 )
             })?;
             bot.status("ready", None);

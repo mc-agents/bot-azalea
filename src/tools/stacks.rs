@@ -49,7 +49,9 @@ pub fn shown(stack: &ItemStack) -> Value {
 
 /// The model the client draws it with. Every item has one; a server that draws its own sets another.
 fn model(stack: &ItemStack) -> Value {
-    stack.get_component::<ItemModel>().map_or(Value::Null, |model| json!(model.resource_location.to_string()))
+    stack
+        .get_component::<ItemModel>()
+        .map_or(Value::Null, |model| json!(model.resource_location.to_string()))
 }
 
 /// A stack in a numbered slot of a window. Only ever called for one that holds something.
@@ -62,14 +64,21 @@ pub fn slot(stack: &ItemStack, index: usize) -> Value {
 /// A stack that is not in a numbered slot: under the cursor, or on its way to the ground. Empty
 /// travels as no stack at all rather than as a count of zero.
 pub fn held(stack: &ItemStack) -> Value {
-    if stack.is_empty() { Value::Null } else { described(stack) }
+    if stack.is_empty() {
+        Value::Null
+    } else {
+        described(stack)
+    }
 }
 
 fn described(stack: &ItemStack) -> Value {
     let (label, label_component) = label(stack);
 
     /* A blank lore line is a line: it is where a menu puts its spacing. */
-    let lines = stack.get_component::<Lore>().map(|lore| lore.lines.clone()).unwrap_or_default();
+    let lines = stack
+        .get_component::<Lore>()
+        .map(|lore| lore.lines.clone())
+        .unwrap_or_default();
 
     json!({
         "name": name(stack),
@@ -109,5 +118,8 @@ pub fn shown_as(stack: &ItemStack) -> String {
     if let Some(custom) = stack.get_component::<CustomName>() {
         return custom.name.to_string();
     }
-    stack.get_component::<ItemName>().map(|item| item.name.to_string()).unwrap_or_else(|| name(stack).to_owned())
+    stack
+        .get_component::<ItemName>()
+        .map(|item| item.name.to_string())
+        .unwrap_or_else(|| name(stack).to_owned())
 }

@@ -8,7 +8,10 @@ on:
 
 env:
   REGISTRY: junhyung.cloud
-  IMAGE: junhyung.cloud/library/bot-azalea
+  IMAGE: junhyung.cloud/mc-agents/bot-azalea
+  # Docker Hub through the registry's proxy cache, so the runners never meet Docker Hub's rate
+  # limit. Empty on a developer's machine: dev/compose.yml pulls from Docker Hub without a login.
+  HUB_PREFIX: junhyung.cloud/docker-hub/
   # One per release of azalea, and the suffix every tag carries: the operator and the end-to-end
   # suite compose a bot's image name as <tag>-mc<version>.
   MINECRAFT: "26.1.2"
@@ -18,42 +21,155 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.value }}
+      # Whether anything the image is built from changed. A docs-only push leaves the image, the
+      # tag and the release alone, so :<version> keeps pointing at the build that was tested.
+      shipped: ${{ steps.version.outputs.shipped }}
+      # The mcp-server release the catalogue in src/catalog.rs came from. The smoke job holds the
+      # bot to that release's protocol checker, and the release notes name it.
+      catalog: ${{ steps.catalog.outputs.version }}
+      catalogSource: ${{ steps.catalog.outputs.source }}
     steps:
       - uses: actions/checkout@v5
         with:
           # The version check diffs against the commit this one replaced.
           fetch-depth: 0
 
-      - id: version
-        run: echo "value=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
-
+      # A force push leaves nothing to compare against: the commit it names is gone from the
+      # repository, and the first push to a branch names the all-zero sha. Only the shape check
+      # runs in either case, and the push publishes.
       - name: version was raised
+        id: version
         env:
           FORCED: ${{ github.event.forced }}
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
           EMPTY_SHA: '0000000000000000000000000000000000000000'
         run: |
+          echo "value=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)" >> "$GITHUB_OUTPUT"
           if [ "$FORCED" = true ] || [ -z "$BASE" ] || [ "$BASE" = "$EMPTY_SHA" ]; then
             bash hack/check-version.sh
           else
             bash hack/check-version.sh "$BASE"
           fi
 
-      # The image is the build: azalea needs a pinned nightly, and the Dockerfile is where it is
-      # pinned, so compiling anywhere else would be compiling something that does not ship.
+      # src/catalog.rs is generated from mcp-server's catalogue and committed, and it names the
+      # release it was read from. Regenerating from that release and diffing is what catches a
+      # file edited by hand or synced from a working tree that never shipped: either would carry
+      # hashes the server does not hold, and the tools would go dark at the next handshake.
+      - name: the catalogue is the one its source says
+        id: catalog
+        run: |
+          set -eu
+          constant() { sed -n "s/^pub const $1: &str = \"\(.*\)\";/\1/p" src/catalog.rs; }
+          source=$(constant CATALOG_SOURCE)
+          case "$source" in
+            v*) ;;
+            *) echo "src/catalog.rs was synced from '$source', not a release; run hack/sync-catalog.py --from <tag>" >&2; exit 1 ;;
+          esac
+          python3 hack/sync-catalog.py --from "$source"
+          git diff --exit-code -- src/catalog.rs
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+          echo "version=$(constant CATALOG_VERSION)" >> "$GITHUB_OUTPUT"
+
+      # azalea builds on one pinned nightly, so the toolchain is the file's, not the action's ref.
+      - id: toolchain
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
+
+  # The bot against a real server and against the protocol checker of the mcp-server release its
+  # catalogue came from. The image is what runs here, built the way it ships, because a Rust binary
+  # that compiled is not yet a bot that joins a world.
+  smoke:
+    needs: check
+    if: needs.check.outputs.shipped != 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+        with:
+          repository: mc-agents/mcp-server
+          ref: ${{ needs.check.outputs.catalogSource }}
+          path: mcp-server
+
       - uses: docker/setup-buildx-action@v3
-      - name: it builds
+      - name: build the bot image
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: false
-          cache-from: type=gha,scope=check
-          cache-to: type=gha,scope=check,mode=max
+          load: true
+          tags: bot-azalea:ci
+          cache-from: type=gha,scope=smoke
+          cache-to: type=gha,scope=smoke,mode=max
+
+      # The Paper image comes through the registry's proxy cache, which takes a login. A pull
+      # request Dependabot opens runs without the repository's secrets; the same two names are set
+      # as Dependabot secrets by the owner, so those pull requests log in too.
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: start Paper
+        env:
+          MC_VERSION: ${{ env.MINECRAFT }}
+        run: |
+          set -eu
+          docker compose -f dev/compose.yml up -d
+          for _ in $(seq 1 90); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' bot-azalea-dev-minecraft-1)
+            [ "$status" = healthy ] && exit 0
+            sleep 10
+          done
+          docker compose -f dev/compose.yml logs --tail 50
+          exit 1
+
+      # The checkers listen on the runner's loopback, so the bot shares the host's network rather
+      # than reaching out through a bridge; conform.py binds 127.0.0.1 and would not hear it otherwise.
+      # Both bots then share the host's ports, and the first keeps redialling after the checker
+      # hangs up, so it gets a health port of its own.
+      - name: it keeps the bot's half of the protocol
+        run: |
+          set -eu
+          timeout 300 python3 mcp-server/dev/conform.py 18777 &
+          checker=$!
+          sleep 1
+          docker run -d --name conform --network host \
+            -e MCP_SERVER_HOST=127.0.0.1 -e MCP_SERVER_PORT=18777 -e BOT_NAME=conform -e HEALTH_PORT=18080 \
+            bot-azalea:ci
+          wait "$checker"
+
+      - name: it joins, is teleported and reports where it landed
+        run: |
+          set -eu
+          timeout 600 python3 dev/smoke.py --port 8765 --server 127.0.0.1 25578 --username azalea_bot &
+          harness=$!
+          sleep 1
+          docker run -d --name bot --network host \
+            -e MCP_SERVER_HOST=127.0.0.1 -e MCP_SERVER_PORT=8765 -e BOT_NAME=azalea_bot \
+            bot-azalea:ci
+          wait "$harness"
+
+      - name: what the bots saw
+        if: always()
+        run: |
+          for name in conform bot; do
+            echo "== $name"
+            docker logs "$name" 2>&1 | tail -100 || true
+          done
 
   # A Rust build under emulation is most of an hour. A native runner each, joined by a manifest list.
   image:
     needs: check
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && needs.check.outputs.shipped != 'false'
     strategy:
       matrix:
         include:
@@ -81,14 +197,19 @@ jobs:
           cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.arch }},mode=max,image-manifest=true,oci-mediatypes=true
 
   publish:
-    needs: [check, image]
+    needs: [check, smoke, image]
+    if: github.event_name != 'pull_request' && needs.check.outputs.shipped != 'false'
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # write for the git tag and the release, and in this job alone.
+      contents: write
       # Lets cosign fetch a short-lived certificate from Fulcio, so no key lives in the repo.
       id-token: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The release notes are the commits since the previous tag.
+          fetch-depth: 0
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -115,6 +236,40 @@ jobs:
 
       - name: sign image
         run: cosign sign --yes "${{ env.IMAGE }}@${{ steps.manifest.outputs.digest }}"
+
+      # The image tags map the version to a build; this maps it to a commit, which is what a
+      # bisect or a diff between two releases needs. A tag that is already there is left where it
+      # is: a re-run of this job must not say a different commit shipped the version. The notes are
+      # the commits since the previous tag, so what changed is read off the release and not
+      # guessed from the tag names.
+      - name: tag and release
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          CATALOG: ${{ needs.check.outputs.catalog }}
+          CATALOG_SOURCE: ${{ needs.check.outputs.catalogSource }}
+          RELEASE: ${{ steps.manifest.outputs.release }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          if ! git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" > /dev/null; then
+            git tag "v$VERSION" "$GITHUB_SHA"
+            git push origin "v$VERSION"
+          fi
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            exit 0
+          fi
+          previous=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null \
+            || git tag --list 'v*' --sort=-v:refname | grep -vx "v$VERSION" | head -1)
+          {
+            echo "Image \`$IMAGE:$RELEASE\`, catalogue $CATALOG from mcp-server $CATALOG_SOURCE."
+            echo
+            if [ -n "$previous" ]; then
+              git log "$previous..HEAD" --format='- %s'
+            else
+              echo "The first tagged release."
+            fi
+          } > notes.md
+          gh release create "v$VERSION" --title "v$VERSION" --notes-file notes.md
 
       - run: |
           {

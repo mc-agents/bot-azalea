@@ -1,6 +1,6 @@
-use azalea::local_player::LocalGameMode;
 use azalea::core::game_type::GameMode;
 use azalea::inventory::Menu;
+use azalea::local_player::LocalGameMode;
 use azalea::protocol::packets::game::{ServerboundSetCommandBlock, ServerboundSignUpdate};
 use azalea::{BlockPos, Client};
 use serde_json::{Value, json};
@@ -99,8 +99,14 @@ pub const READ_BLOCK_ENTITY: Tool = Tool {
 /// in creative, and an operator. The server answers with the block's command, which fills it in.
 pub fn opened_command_block(game: &Game, at: BlockPos) {
     let block = block_name(&game.client, at);
-    let command_block = matches!(plain(&block), "command_block" | "chain_command_block" | "repeating_command_block");
-    let creative = game.client.get_component::<LocalGameMode>().is_some_and(|mode| mode.current == GameMode::Creative);
+    let command_block = matches!(
+        plain(&block),
+        "command_block" | "chain_command_block" | "repeating_command_block"
+    );
+    let creative = game
+        .client
+        .get_component::<LocalGameMode>()
+        .is_some_and(|mode| mode.current == GameMode::Creative);
     let operator = game.hud.borrow().permission_level >= 2;
 
     if command_block && creative && operator {
@@ -129,15 +135,23 @@ pub fn press(game: &Game, label: &str) -> Outcome {
         });
     };
     let buttons = editor.buttons();
-    let Some(index) = pick_by(&buttons, label, String::as_str).and_then(|chosen| buttons.iter().position(|button| std::ptr::eq(button, chosen)))
+    let Some(index) = pick_by(&buttons, label, String::as_str)
+        .and_then(|chosen| buttons.iter().position(|button| std::ptr::eq(button, chosen)))
     else {
-        return Err(no_such_button(label, COMMAND_SCREEN, buttons.iter().map(String::as_str)));
+        return Err(no_such_button(
+            label,
+            COMMAND_SCREEN,
+            buttons.iter().map(String::as_str),
+        ));
     };
     let pressed_label = buttons[index].clone();
 
     /* Everything but Cancel is off until the block's command has arrived. */
     if !editor.loaded && pressed_label != "Cancel" {
-        return Err(Failure::refused("BUTTON_DISABLED", format!("the button \"{pressed_label}\" is disabled")));
+        return Err(Failure::refused(
+            "BUTTON_DISABLED",
+            format!("the button \"{pressed_label}\" is disabled"),
+        ));
     }
     match pressed_label.as_str() {
         "Done" => {
@@ -165,7 +179,9 @@ pub fn close(game: &Game) -> Option<(String, &'static str)> {
         send_sign(&game.client, &editor);
         return Some((editor.title().to_owned(), "sign editor"));
     }
-    hud.command_editor.take().map(|_| (String::new(), "command block editor"))
+    hud.command_editor
+        .take()
+        .map(|_| (String::new(), "command block editor"))
 }
 
 /// The screen up when no dialog and no editor is: a book held open over the world, or the one a
@@ -180,7 +196,9 @@ fn screen_on_top(game: &Game) -> Option<&'static str> {
 }
 
 fn book_open(game: &Game) -> bool {
-    game.client.get_component::<Menus>().is_some_and(|menus| menus.book.is_some())
+    game.client
+        .get_component::<Menus>()
+        .is_some_and(|menus| menus.book.is_some())
 }
 
 /// No dialog and no editor to type into. An anvil's name box is a text field the other kind of bot
@@ -193,7 +211,10 @@ fn nothing_to_type_into(game: &Game) -> Failure {
     match windows::menu(&game.client) {
         Some(window) if matches!(window.menu, Menu::Anvil { .. }) => Failure::refused(
             "UNSUPPORTED_INPUT",
-            format!("{} has a name box this bot does not know how to type into", windows::screen(&window.menu)),
+            format!(
+                "{} has a name box this bot does not know how to type into",
+                windows::screen(&window.menu)
+            ),
         ),
         Some(window) => no_text_field(windows::screen(&window.menu)),
         None => Failure::refused("NO_SCREEN", "no screen is open, so there is nothing to type into"),
@@ -256,7 +277,12 @@ fn type_into_sign(game: &Game, typed: &str, wanted: Option<&str>, replace: bool)
     if first + lines.len() > editor.lines.len() {
         let refused = Failure::refused(
             "SIGN_TOO_SHORT",
-            format!("a sign has {} lines, and this writes {} of them from line {}", editor.lines.len(), lines.len(), first + 1),
+            format!(
+                "a sign has {} lines, and this writes {} of them from line {}",
+                editor.lines.len(),
+                lines.len(),
+                first + 1
+            ),
         );
         hud.sign_editor = Some(editor);
         return Err(refused);
@@ -290,7 +316,10 @@ fn type_into_sign(game: &Game, typed: &str, wanted: Option<&str>, replace: bool)
 
 fn type_into_command_block(game: &Game, typed: &str, wanted: Option<&str>, replace: bool) -> Outcome {
     let mut hud = game.hud.borrow_mut();
-    let editor = hud.command_editor.as_mut().expect("the caller saw a command block editor");
+    let editor = hud
+        .command_editor
+        .as_mut()
+        .expect("the caller saw a command block editor");
 
     /*
     The editor opens before the server has sent the block's command, and when it arrives it is
@@ -305,8 +334,22 @@ fn type_into_command_block(game: &Game, typed: &str, wanted: Option<&str>, repla
     }
 
     let fields = [
-        Field { key: "command".into(), label: Some("Console Command".into()), index: 1, max_length: COMMAND_LENGTH, multiline: false, editable: true },
-        Field { key: "output".into(), label: Some("Previous Output".into()), index: 2, max_length: COMMAND_LENGTH, multiline: false, editable: false },
+        Field {
+            key: "command".into(),
+            label: Some("Console Command".into()),
+            index: 1,
+            max_length: COMMAND_LENGTH,
+            multiline: false,
+            editable: true,
+        },
+        Field {
+            key: "output".into(),
+            label: Some("Previous Output".into()),
+            index: 2,
+            max_length: COMMAND_LENGTH,
+            multiline: false,
+            editable: false,
+        },
     ];
     let field = choose(&fields, wanted, COMMAND_SCREEN)?;
     let before = match (field.editable, replace) {
@@ -323,11 +366,19 @@ fn type_into_command_block(game: &Game, typed: &str, wanted: Option<&str>, repla
 }
 
 fn send_sign(client: &Client, editor: &SignEditor) {
-    client.write_packet(ServerboundSignUpdate { pos: editor.at, is_front_text: editor.front, lines: editor.lines.clone() });
+    client.write_packet(ServerboundSignUpdate {
+        pos: editor.at,
+        is_front_text: editor.front,
+        lines: editor.lines.clone(),
+    });
 }
 
 fn sign_screen(editor: &SignEditor) -> &'static str {
-    if editor.hanging { "HangingSignEditScreen" } else { "SignEditScreen" }
+    if editor.hanging {
+        "HangingSignEditScreen"
+    } else {
+        "SignEditScreen"
+    }
 }
 
 struct Field {
@@ -356,17 +407,40 @@ fn choose<'a>(fields: &'a [Field], wanted: Option<&str>, place: &str) -> Result<
         }
         return Err(Failure::refused(
             "FIELD_NOT_NAMED",
-            format!("{place} has {} text fields and none was asked for. They are {}.", fields.len(), described()),
+            format!(
+                "{place} has {} text fields and none was asked for. They are {}.",
+                fields.len(),
+                described()
+            ),
         ));
     };
 
     let lowered = wanted.to_lowercase();
     fields
         .iter()
-        .find(|field| field.label.as_ref().is_some_and(|label| label.to_lowercase() == lowered) || field.index.to_string() == wanted)
-        .or_else(|| fields.iter().find(|field| field.label.as_ref().is_some_and(|label| label.to_lowercase().contains(&lowered))))
+        .find(|field| {
+            field
+                .label
+                .as_ref()
+                .is_some_and(|label| label.to_lowercase() == lowered)
+                || field.index.to_string() == wanted
+        })
+        .or_else(|| {
+            fields.iter().find(|field| {
+                field
+                    .label
+                    .as_ref()
+                    .is_some_and(|label| label.to_lowercase().contains(&lowered))
+            })
+        })
         .ok_or_else(|| {
-            Failure::refused("NO_SUCH_FIELD", format!("no text field matching \"{wanted}\" on {place}. What it has: {}.", described()))
+            Failure::refused(
+                "NO_SUCH_FIELD",
+                format!(
+                    "no text field matching \"{wanted}\" on {place}. What it has: {}.",
+                    described()
+                ),
+            )
         })
 }
 
@@ -382,7 +456,10 @@ fn write(field: &Field, before: &str, typed: &str) -> Result<(String, usize), Fa
             if !field.multiline {
                 return Err(Failure::refused(
                     "FIELD_IS_ONE_LINE",
-                    format!("{} holds one line, and the text asked for more than one", field.describe()),
+                    format!(
+                        "{} holds one line, and the text asked for more than one",
+                        field.describe()
+                    ),
                 ));
             }
         } else if !field.editable || !allowed(character) {
@@ -422,7 +499,11 @@ fn line_of(wanted: &str) -> Result<usize, Failure> {
 }
 
 fn typed_into(field: &Field, place: &str, after: &str, refused: usize) -> Answer {
-    Answer::text(format!("typed into {} on {place}, which now reads \"{after}\"{}", field.describe(), refused_note(refused)))
+    Answer::text(format!(
+        "typed into {} on {place}, which now reads \"{after}\"{}",
+        field.describe(),
+        refused_note(refused)
+    ))
 }
 
 fn refused_note(refused: usize) -> String {
@@ -436,16 +517,27 @@ fn refused_note(refused: usize) -> String {
 fn no_text_field(place: &str) -> Failure {
     Failure::refused(
         "NO_TEXT_FIELD",
-        format!("{place} has no text field on it. press-dialog-button presses a button and click-slot moves an item; this is only for somewhere text can be written."),
+        format!(
+            "{place} has no text field on it. press-dialog-button presses a button and click-slot moves an item; this is only for somewhere text can be written."
+        ),
     )
 }
 
 fn no_such_button<'a>(label: &str, screen: &str, buttons: impl Iterator<Item = &'a str>) -> Failure {
-    Failure::refused("NO_SUCH_BUTTON", format!("no button matching \"{label}\" on {screen}; it offers {}", offered(buttons)))
+    Failure::refused(
+        "NO_SUCH_BUTTON",
+        format!(
+            "no button matching \"{label}\" on {screen}; it offers {}",
+            offered(buttons)
+        ),
+    )
 }
 
 fn pressed(label: &str) -> Answer {
-    Answer::data(format!("pressed \"{label}\""), json!({"label": label, "confirmed": false, "screenAfter": Value::Null}))
+    Answer::data(
+        format!("pressed \"{label}\""),
+        json!({"label": label, "confirmed": false, "screenAfter": Value::Null}),
+    )
 }
 
 #[cfg(test)]
@@ -458,6 +550,9 @@ mod tests {
     fn a_screen_with_no_buttons_is_named_and_offers_none() {
         let refused = no_such_button("Done", "ContainerScreen", std::iter::empty());
         assert_eq!(refused.code, "NO_SUCH_BUTTON");
-        assert_eq!(refused.message, "no button matching \"Done\" on ContainerScreen; it offers none");
+        assert_eq!(
+            refused.message,
+            "no button matching \"Done\" on ContainerScreen; it offers none"
+        );
     }
 }

@@ -16,7 +16,9 @@ pub fn position(args: &Value) -> Result<BlockPos, Failure> {
 }
 
 pub fn text<'a>(args: &'a Value, name: &str) -> Result<&'a str, Failure> {
-    args[name].as_str().ok_or_else(|| Failure::bad_args(format!("expected a string for {name}")))
+    args[name]
+        .as_str()
+        .ok_or_else(|| Failure::bad_args(format!("expected a string for {name}")))
 }
 
 /// A registry name without its namespace, which is how the game's own lookups take it.
@@ -40,7 +42,12 @@ pub fn integer(args: &Value, name: &str, fallback: i64) -> Result<i64, Failure> 
         Value::Null => Ok(fallback),
         value => value
             .as_i64()
-            .or_else(|| value.as_f64().filter(|number| number.fract() == 0.0).map(|number| number as i64))
+            .or_else(|| {
+                value
+                    .as_f64()
+                    .filter(|number| number.fract() == 0.0)
+                    .map(|number| number as i64)
+            })
             .ok_or_else(|| Failure::bad_args(format!("expected an integer for {name}"))),
     }
 }
@@ -48,7 +55,9 @@ pub fn integer(args: &Value, name: &str, fallback: i64) -> Result<i64, Failure> 
 pub fn boolean(args: &Value, name: &str, fallback: bool) -> Result<bool, Failure> {
     match &args[name] {
         Value::Null => Ok(fallback),
-        value => value.as_bool().ok_or_else(|| Failure::bad_args(format!("expected a boolean for {name}"))),
+        value => value
+            .as_bool()
+            .ok_or_else(|| Failure::bad_args(format!("expected a boolean for {name}"))),
     }
 }
 

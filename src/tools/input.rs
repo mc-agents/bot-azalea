@@ -104,9 +104,17 @@ impl Watch {
 
     pub(super) fn parse(given: &Value) -> Result<Watch, Failure> {
         let source = text(given, "pattern")?.to_owned();
-        let pattern = Regex::new(&source)
-            .map_err(|invalid| Failure::refused("BAD_PATTERN", format!("\"{source}\" is not a valid regular expression: {invalid}")))?;
-        Ok(Watch { feed: text(given, "feed")?.to_owned(), source, pattern })
+        let pattern = Regex::new(&source).map_err(|invalid| {
+            Failure::refused(
+                "BAD_PATTERN",
+                format!("\"{source}\" is not a valid regular expression: {invalid}"),
+            )
+        })?;
+        Ok(Watch {
+            feed: text(given, "feed")?.to_owned(),
+            source,
+            pattern,
+        })
     }
 
     pub(super) fn matches(&self, kind: &str, line: &Line) -> bool {
@@ -138,7 +146,10 @@ impl PressArgs {
             _ => Some(integer(args, "slot", 0)? as u8),
         };
         if key == Key::Hotbar && slot.is_none() {
-            return Err(Failure::refused("NO_SLOT", "hotbar needs slot, 0 being the leftmost hotbar slot."));
+            return Err(Failure::refused(
+                "NO_SLOT",
+                "hotbar needs slot, 0 being the leftmost hotbar slot.",
+            ));
         }
         Ok(PressArgs {
             key,
@@ -177,18 +188,27 @@ pub const PRESS_INPUT: Tool = Tool {
             let args = PressArgs::parse(&args)?;
             game_takes_keys(&bot)?;
             let (repeat, hold, interval, timeout) = (args.repeat, args.hold, args.interval, args.timeout);
-            let sequence = (u64::from(repeat) * u64::from(hold) + u64::from(repeat - 1) * u64::from(interval)) * TICK_MS;
+            let sequence =
+                (u64::from(repeat) * u64::from(hold) + u64::from(repeat - 1) * u64::from(interval)) * TICK_MS;
             if sequence > timeout {
                 return Err(Failure::refused(
                     "TOO_LONG",
-                    format!("{repeat} presses of {}, {} apart, take {sequence}ms, longer than timeoutMs ({timeout}ms).", ticks(hold), ticks(interval)),
+                    format!(
+                        "{repeat} presses of {}, {} apart, take {sequence}ms, longer than timeoutMs ({timeout}ms).",
+                        ticks(hold),
+                        ticks(interval)
+                    ),
                 ));
             }
 
             let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout);
             let key = args.key();
             let data = press(&bot, args, Some(deadline)).await?;
-            let summary = format!("pressed {key} {} of {repeat} time(s), {}", data["presses"], data["stopped"].as_str().unwrap_or_default());
+            let summary = format!(
+                "pressed {key} {} of {repeat} time(s), {}",
+                data["presses"],
+                data["stopped"].as_str().unwrap_or_default()
+            );
             Ok(Answer::data(summary, data))
         })
     },
@@ -199,8 +219,15 @@ pub(super) fn game_takes_keys(bot: &Bot) -> Result<(), Failure> {
     let client = alive(bot, |game| game.client.clone())?;
     /* A dialog is a screen on the other kind of bot, and keys go to it there too. */
     let dialog = alive(bot, |game| game.hud.borrow().dialog.is_some())?;
-    if dialog || client.get_component::<Inventory>().is_some_and(|inventory| inventory.container_menu.is_some()) {
-        return Err(Failure::refused("WINDOW_OPEN", "a window is open, and keys go to it rather than to the game; close-window first."));
+    if dialog
+        || client
+            .get_component::<Inventory>()
+            .is_some_and(|inventory| inventory.container_menu.is_some())
+    {
+        return Err(Failure::refused(
+            "WINDOW_OPEN",
+            "a window is open, and keys go to it rather than to the game; close-window first.",
+        ));
     }
     Ok(())
 }
@@ -208,8 +235,21 @@ pub(super) fn game_takes_keys(bot: &Bot) -> Result<(), Failure> {
 /// The presses, made and answered as press-input's DTO. The first press goes out on the tick after
 /// the call, and a key let go of is settled with the server before the answer. With no deadline
 /// the presses run until they are done, or until whatever awaits them drops them.
-pub(super) async fn press(bot: &Bot, args: PressArgs, deadline: Option<tokio::time::Instant>) -> Result<Value, Failure> {
-    let PressArgs { key, slot, hold, repeat, interval, after, until, timeout } = args;
+pub(super) async fn press(
+    bot: &Bot,
+    args: PressArgs,
+    deadline: Option<tokio::time::Instant>,
+) -> Result<Value, Failure> {
+    let PressArgs {
+        key,
+        slot,
+        hold,
+        repeat,
+        interval,
+        after,
+        until,
+        timeout,
+    } = args;
     let client = alive(bot, |game| game.client.clone())?;
 
     let mut lines = bot.shown.subscribe();
@@ -309,7 +349,9 @@ pub(super) async fn press(bot: &Bot, args: PressArgs, deadline: Option<tokio::ti
         keys.tick();
     }
     let selected = alive(bot, |game| game.client.selected_hotbar_slot())?;
-    let mut after_value = after.as_ref().map_or(Value::Null, |after| after.describe(after_matched.as_deref()));
+    let mut after_value = after
+        .as_ref()
+        .map_or(Value::Null, |after| after.describe(after_matched.as_deref()));
     if !after_value.is_null() {
         after_value["waitedMs"] = json!(waited);
     }
@@ -343,7 +385,15 @@ struct Keys {
 
 impl Keys {
     fn new(client: Client, key: Key, slot: u8) -> Keys {
-        Keys { client, key, slot, down: false, before: false, held_ticks: 0, miss_ticks: 0 }
+        Keys {
+            client,
+            key,
+            slot,
+            down: false,
+            before: false,
+            held_ticks: 0,
+            miss_ticks: 0,
+        }
     }
 
     fn press(&mut self) {
@@ -388,7 +438,7 @@ impl Keys {
         }
         if self.down && self.key == Key::Use {
             self.held_ticks += 1;
-            if self.held_ticks % USE_DELAY_TICKS == 0 && !self.using() {
+            if self.held_ticks.is_multiple_of(USE_DELAY_TICKS) && !self.using() {
                 self.use_item();
             }
         }
@@ -435,7 +485,11 @@ impl Keys {
         }
         let wanted = self.down || self.before;
         /* Nothing sent yet is every key up. */
-        let sent = self.client.get_component::<LastSentInput>().map(|sent| sent.0.clone()).unwrap_or_default();
+        let sent = self
+            .client
+            .get_component::<LastSentInput>()
+            .map(|sent| sent.0.clone())
+            .unwrap_or_default();
         match self.key {
             Key::Jump => sent.jump == self.down,
             Key::Sneak => sent.shift == wanted,
@@ -453,16 +507,23 @@ impl Keys {
         let client = &self.client;
         client.ecs.write().entity_mut(client.entity).remove::<MiningQueued>();
         if client.is_mining() {
-            client.ecs.write().write_message(StopMiningBlockEvent { entity: client.entity });
+            client
+                .ecs
+                .write()
+                .write_message(StopMiningBlockEvent { entity: client.entity });
         }
     }
 
     fn using(&self) -> bool {
-        self.client.get_component::<AbstractLivingUsingItem>().is_some_and(|using| using.0)
+        self.client
+            .get_component::<AbstractLivingUsingItem>()
+            .is_some_and(|using| using.0)
     }
 
     fn creative(&self) -> bool {
-        self.client.get_component::<LocalGameMode>().is_some_and(|mode| mode.current == GameMode::Creative)
+        self.client
+            .get_component::<LocalGameMode>()
+            .is_some_and(|mode| mode.current == GameMode::Creative)
     }
 
     /// A right-click at what the bot is looking at, with the main hand, as the client makes one.
@@ -491,13 +552,21 @@ impl Keys {
             HitResult::Block(hit) => {
                 if !hit.miss {
                     let seq = self.predict();
-                    client.write_packet(ServerboundUseItemOn { hand: InteractionHand::MainHand, block_hit: (&hit).into(), seq });
+                    client.write_packet(ServerboundUseItemOn {
+                        hand: InteractionHand::MainHand,
+                        block_hit: (&hit).into(),
+                        seq,
+                    });
 
                     let inventory = client.component::<Inventory>();
                     let held = inventory.held_item().clone();
                     let has_items = !held.is_empty() || !inventory.inventory_menu.as_player().offhand.is_empty();
                     drop(inventory);
-                    let clicked = client.world().read().get_block_state(hit.block_pos).map(BlockKind::from);
+                    let clicked = client
+                        .world()
+                        .read()
+                        .get_block_state(hit.block_pos)
+                        .map(BlockKind::from);
 
                     let block_took_it = !(client.crouching() && has_items) && clicked.is_some_and(interactive);
                     if block_took_it || held.is_empty() || BlockKind::from_str(held.kind().to_str()).is_ok() {
@@ -507,7 +576,12 @@ impl Keys {
                 }
                 let seq = self.predict();
                 let look = *client.component::<LookDirection>();
-                client.write_packet(ServerboundUseItem { hand: InteractionHand::MainHand, seq, y_rot: look.y_rot(), x_rot: look.x_rot() });
+                client.write_packet(ServerboundUseItem {
+                    hand: InteractionHand::MainHand,
+                    seq,
+                    y_rot: look.y_rot(),
+                    x_rot: look.x_rot(),
+                });
             }
         }
     }
@@ -544,7 +618,8 @@ impl Keys {
     }
 
     fn predict(&self) -> u32 {
-        self.client.query_self::<&mut BlockStatePredictionHandler, _>(|mut prediction| prediction.start_predicting())
+        self.client
+            .query_self::<&mut BlockStatePredictionHandler, _>(|mut prediction| prediction.start_predicting())
     }
 }
 
@@ -561,18 +636,56 @@ impl Drop for Keys {
 /// the client uses nothing after it. Iron doors and trapdoors open only by redstone and pass it on.
 fn interactive(block: BlockKind) -> bool {
     const TAKEN_BY: &[&str] = &[
-        "chest", "barrel", "shulker_box", "furnace", "smoker", "hopper", "dispenser", "dropper", "crafter",
-        "brewing_stand", "crafting_table", "anvil", "enchanting_table", "grindstone", "loom", "stonecutter",
-        "cartography_table", "smithing_table", "lectern", "beacon", "door", "trapdoor", "fence_gate", "button",
-        "lever", "_bed", "bell", "repeater", "comparator", "daylight_detector", "note_block", "cake", "jukebox",
-        "respawn_anchor", "command_block", "sign", "structure_block", "jigsaw",
+        "chest",
+        "barrel",
+        "shulker_box",
+        "furnace",
+        "smoker",
+        "hopper",
+        "dispenser",
+        "dropper",
+        "crafter",
+        "brewing_stand",
+        "crafting_table",
+        "anvil",
+        "enchanting_table",
+        "grindstone",
+        "loom",
+        "stonecutter",
+        "cartography_table",
+        "smithing_table",
+        "lectern",
+        "beacon",
+        "door",
+        "trapdoor",
+        "fence_gate",
+        "button",
+        "lever",
+        "_bed",
+        "bell",
+        "repeater",
+        "comparator",
+        "daylight_detector",
+        "note_block",
+        "cake",
+        "jukebox",
+        "respawn_anchor",
+        "command_block",
+        "sign",
+        "structure_block",
+        "jigsaw",
     ];
     let name = block.to_str();
     !name.starts_with("minecraft:iron_") && TAKEN_BY.iter().any(|part| name.contains(part))
 }
 
 fn action(action: Action, pos: BlockPos, seq: u32) -> ServerboundPlayerAction {
-    ServerboundPlayerAction { action, pos, direction: Direction::Down, seq }
+    ServerboundPlayerAction {
+        action,
+        pos,
+        direction: Direction::Down,
+        seq,
+    }
 }
 
 fn ticks(count: u32) -> String {

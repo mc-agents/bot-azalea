@@ -31,7 +31,8 @@ impl BlockEntities {
 
     /// A chunk arrives whole, so what was kept for it before is replaced rather than added to.
     pub fn forget_chunk(&mut self, x: i32, z: i32) {
-        self.by_position.retain(|at, _| at.x.div_euclid(16) != x || at.z.div_euclid(16) != z);
+        self.by_position
+            .retain(|at, _| at.x.div_euclid(16) != x || at.z.div_euclid(16) != z);
     }
 
     pub fn clear(&mut self) {
@@ -40,7 +41,9 @@ impl BlockEntities {
 
     /// The block entity on a position, while the block it came with is still there.
     pub fn at(&self, at: BlockPos, block: &str) -> Option<&Tracked> {
-        self.by_position.get(&at).filter(|tracked| tracked.block.as_deref().is_none_or(|kept| kept == block))
+        self.by_position
+            .get(&at)
+            .filter(|tracked| tracked.block.as_deref().is_none_or(|kept| kept == block))
     }
 }
 
@@ -70,7 +73,11 @@ pub struct SignEditor {
 
 impl SignEditor {
     pub fn title(&self) -> &'static str {
-        if self.hanging { "Edit Hanging Sign Message" } else { "Edit Sign Message" }
+        if self.hanging {
+            "Edit Hanging Sign Message"
+        } else {
+            "Edit Sign Message"
+        }
     }
 
     /// `SignBlockEntity.getMaxTextLineWidth`, in the pixels the client's font measures.
@@ -108,7 +115,11 @@ impl CommandEditor {
 
     /// Filled from the block's data and its block, as `CommandBlockEditScreen.updateGui` fills it.
     pub fn load(&mut self, data: &Value, block: &str, conditional: bool) {
-        self.command = data.get("Command").and_then(Value::as_str).unwrap_or_default().to_owned();
+        self.command = data
+            .get("Command")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
         self.track_output = flag(data.get("TrackOutput"), true);
         self.automatic = flag(data.get("auto"), false);
         self.previous_output = match data.get("LastOutput") {
@@ -134,8 +145,18 @@ impl CommandEditor {
                 Mode::Redstone => "Impulse",
             }
             .into(),
-            if self.conditional { "Conditional" } else { "Unconditional" }.into(),
-            if self.automatic { "Always Active" } else { "Needs Redstone" }.into(),
+            if self.conditional {
+                "Conditional"
+            } else {
+                "Unconditional"
+            }
+            .into(),
+            if self.automatic {
+                "Always Active"
+            } else {
+                "Needs Redstone"
+            }
+            .into(),
             "Done".into(),
             "Cancel".into(),
         ]

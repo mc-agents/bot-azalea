@@ -76,7 +76,7 @@ async fn serve(bot: &Rc<Bot>, stream: TcpStream) {
 }
 
 fn hello(bot: &Bot) -> Value {
-    json!({
+    let mut hello = json!({
         "t": "hello",
         "protocols": [catalog::PROTOCOL],
         "botName": bot.config.bot_name,
@@ -86,7 +86,13 @@ fn hello(bot: &Bot) -> Value {
         "catalogVersion": catalog::CATALOG_VERSION,
         "capabilities": tools::capabilities(),
         "features": [],
-    })
+    });
+    // Only when there is one: a server without a token ignores the field, and a server with one
+    // refuses a hello that lacks it, so sending nothing is the same as sending the wrong thing.
+    if let Some(token) = &bot.config.link_token {
+        hello["linkToken"] = Value::String(token.clone());
+    }
+    hello
 }
 
 fn handle(bot: &Rc<Bot>, message: Value) {
@@ -94,6 +100,15 @@ fn handle(bot: &Rc<Bot>, message: Value) {
         "helloOk" => {
             let feeds = message["events"].as_object().cloned().unwrap_or_else(Map::new);
             info!("linked as session {}", message["sessionId"].as_str().unwrap_or("?"));
+            // A rejected tool is one the server will never call, and nothing else on this side
+            // says so: the bot keeps implementing it and every call for it simply never comes.
+            for rejected in message["rejectedTools"].as_array().into_iter().flatten() {
+                warn!(
+                    "the server rejected {}: {}",
+                    rejected["tool"].as_str().unwrap_or("?"),
+                    rejected["reason"].as_str().unwrap_or("no reason given")
+                );
+            }
             bot.accepted(feeds, message["repeatFlushMs"].as_u64());
             /* "idle" is the protocol's word for linked and in no world. */
             bot.status("idle", None);
@@ -106,7 +121,11 @@ fn handle(bot: &Rc<Bot>, message: Value) {
         "connect" => game::connect(bot, &message),
         "disconnect" => game::disconnect(bot, &message),
         "call" => call(bot, &message),
-        "cancel" => calls::cancel(bot, &message["id"], message["reason"].as_str().unwrap_or("cancelled").into()),
+        "cancel" => calls::cancel(
+            bot,
+            &message["id"],
+            message["reason"].as_str().unwrap_or("cancelled").into(),
+        ),
         "ping" => bot.send(&json!({
             "t": "pong",
             "nonce": message["nonce"],
@@ -129,6 +148,8 @@ fn call(bot: &Rc<Bot>, message: &Value) {
 
     match tools::find(&name) {
         Some(tool) => calls::run(bot, id, name, deadline, (tool.run)(bot.clone(), args)),
-        None => calls::run(bot, id, name.clone(), deadline, async move { Err(Failure::unsupported(&name)) }),
+        None => calls::run(bot, id, name.clone(), deadline, async move {
+            Err(Failure::unsupported(&name))
+        }),
     }
 }

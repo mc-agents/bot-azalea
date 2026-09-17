@@ -12,7 +12,9 @@ pub const SEND_CHAT: Tool = Tool {
     name: "send-chat",
     run: |bot, args| {
         Box::pin(async move {
-            let message = args["message"].as_str().ok_or_else(|| Failure::bad_args("expected a string for message"))?;
+            let message = args["message"]
+                .as_str()
+                .ok_or_else(|| Failure::bad_args("expected a string for message"))?;
 
             /*
             A slash is refused rather than sent. run-command exists because the server's answer to a
@@ -65,7 +67,10 @@ pub const CLICK_CHAT: Tool = Tool {
                     None => {
                         return Err(Failure::refused(
                             "NO_SUCH_CHAT_CLICK",
-                            format!("no chat line on screen has a clickable \"{wanted}\" on it. {}", describe(&offered)),
+                            format!(
+                                "no chat line on screen has a clickable \"{wanted}\" on it. {}",
+                                describe(&offered)
+                            ),
                         ));
                     }
                 }
@@ -89,7 +94,10 @@ pub const CLICK_CHAT: Tool = Tool {
                     let Some(shown) = shown else {
                         return Err(Failure::refused(
                             "NO_SUCH_DIALOG",
-                            format!("\"{}\" shows a dialog the server never declared, so there is nothing to open.", found.text),
+                            format!(
+                                "\"{}\" shows a dialog the server never declared, so there is nothing to open.",
+                                found.text
+                            ),
                         ));
                     };
                     opened = Some(screen(&shown));
@@ -111,7 +119,9 @@ pub const CLICK_CHAT: Tool = Tool {
             for _ in 0..SETTLE_TICKS {
                 tick(&bot).await;
             }
-            let opened = opened.map(|screen| format!(", and {screen} opened")).unwrap_or_default();
+            let opened = opened
+                .map(|screen| format!(", and {screen} opened"))
+                .unwrap_or_default();
             Ok(Answer::text(format!("clicked {}{opened}.", found.describe())))
         })
     },
@@ -153,7 +163,10 @@ fn action(event: &ClickEvent) -> &'static str {
 fn clickable(line: &FormattedText) -> Vec<Clickable> {
     let base = line.get_base();
     if let Some(event) = &base.style.click_event {
-        return vec![Clickable { text: line.to_string(), event: event.clone() }];
+        return vec![Clickable {
+            text: line.to_string(),
+            event: event.clone(),
+        }];
     }
     base.siblings.iter().flat_map(clickable).collect()
 }
@@ -161,7 +174,11 @@ fn clickable(line: &FormattedText) -> Vec<Clickable> {
 /// The client's own name for the screen a dialog is drawn on, which is what the other kind of bot
 /// says opened.
 fn screen(dialog: &Value) -> &'static str {
-    match dialog.get("type").and_then(Value::as_str).map(|kind| kind.strip_prefix("minecraft:").unwrap_or(kind)) {
+    match dialog
+        .get("type")
+        .and_then(Value::as_str)
+        .map(|kind| kind.strip_prefix("minecraft:").unwrap_or(kind))
+    {
         Some("multi_action") => "MultiButtonDialogScreen",
         Some("dialog_list") => "DialogListDialogScreen",
         Some("server_links") => "ServerLinksDialogScreen",
@@ -182,6 +199,10 @@ fn describe(offered: &[Clickable]) -> String {
         return "Nothing said in chat since this bot joined is clickable at all.".to_owned();
     }
     let listed: Vec<String> = offered.iter().take(MAX_LISTED).map(Clickable::describe).collect();
-    let more = if offered.len() > MAX_LISTED { format!(", and {} more", offered.len() - MAX_LISTED) } else { String::new() };
+    let more = if offered.len() > MAX_LISTED {
+        format!(", and {} more", offered.len() - MAX_LISTED)
+    } else {
+        String::new()
+    };
     format!("What is: {}{more}.", listed.join(", "))
 }

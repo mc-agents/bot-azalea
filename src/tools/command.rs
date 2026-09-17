@@ -46,7 +46,10 @@ pub const COMPLETE_COMMAND: Tool = Tool {
 
             let (id, answered) = in_world(&bot, |game| {
                 let (id, answered) = game.hud.borrow_mut().ask();
-                game.client.write_packet(ServerboundCommandSuggestion { id, command: slashed(&asked) });
+                game.client.write_packet(ServerboundCommandSuggestion {
+                    id,
+                    command: slashed(&asked),
+                });
                 (id, answered)
             })?;
 
@@ -60,7 +63,10 @@ pub const COMPLETE_COMMAND: Tool = Tool {
                     }
                     return Err(Failure::refused(
                         "COMPLETION_TIMEOUT",
-                        format!("the server did not answer what completes {asked} within {}ms", timeout.as_millis()),
+                        format!(
+                            "the server did not answer what completes {asked} within {}ms",
+                            timeout.as_millis()
+                        ),
                     ));
                 }
             };
@@ -126,7 +132,7 @@ pub const SWITCH_SERVER: Tool = Tool {
                 tokio::select! {
                     line = heard.recv() => match line {
                         Ok(line) if already_there(&line) => {
-                            let at = in_world(&bot, |game| where_is(game))?;
+                            let at = in_world(&bot, where_is)?;
                             return Ok(Answer::text(format!("Already on \"{target}\" at {}.", at.0)));
                         }
                         Ok(line) if refused(&line) => {
@@ -159,7 +165,7 @@ pub const SWITCH_SERVER: Tool = Tool {
                 }
             }
 
-            let (at, dimension) = in_world(&bot, |game| where_is(game))?;
+            let (at, dimension) = in_world(&bot, where_is)?;
             Ok(Answer::text(format!("Now on \"{target}\" at {at} in {dimension}.")))
         })
     },
@@ -168,12 +174,20 @@ pub const SWITCH_SERVER: Tool = Tool {
 const SETTLE_TICKS: u64 = 20;
 
 pub(super) fn slashed(command: &str) -> String {
-    if command.starts_with('/') { command.to_owned() } else { format!("/{command}") }
+    if command.starts_with('/') {
+        command.to_owned()
+    } else {
+        format!("/{command}")
+    }
 }
 
 fn where_is(game: &crate::game::Game) -> (String, String) {
     let at = BlockPos::from(game.client.position());
-    let dimension = game.client.get_component::<WorldName>().map(|name| name.0.path().to_owned()).unwrap_or_default();
+    let dimension = game
+        .client
+        .get_component::<WorldName>()
+        .map(|name| name.0.path().to_owned())
+        .unwrap_or_default();
     (format!("({}, {}, {})", at.x, at.y, at.z), dimension)
 }
 
@@ -185,7 +199,15 @@ fn already_there(line: &str) -> bool {
 /// What they say when there is nowhere to send it.
 fn refused(line: &str) -> bool {
     let line = line.to_lowercase();
-    ["does not exist", "doesn't exist", "doesnot exist", "does n't exist", "unable to connect", "no available server", "not a valid server"]
-        .iter()
-        .any(|said| line.contains(said))
+    [
+        "does not exist",
+        "doesn't exist",
+        "doesnot exist",
+        "does n't exist",
+        "unable to connect",
+        "no available server",
+        "not a valid server",
+    ]
+    .iter()
+    .any(|said| line.contains(said))
 }

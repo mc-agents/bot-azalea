@@ -1,0 +1,44 @@
+name: bot-azalea-dev
+
+services:
+  minecraft:
+    # Docker Hub by default, so a developer needs no login. CI sets HUB_PREFIX to the registry's
+    # proxy cache, which the runners pull from without meeting Docker Hub's rate limit.
+    image: ${HUB_PREFIX:-}itzg/minecraft-server:java25
+    tty: true
+    stdin_open: true
+    ports:
+      # 25565 is often already taken. The dev server publishes somewhere else.
+      - "${MC_PORT:-25578}:25565"
+    environment:
+      EULA: "TRUE"
+      TYPE: PAPER
+      VERSION: "${MC_VERSION:-26.1.2}"
+      # The bots authenticate offline. Do not run this outside a dev environment.
+      ONLINE_MODE: "FALSE"
+      MODE: creative
+      # A flat world keeps the pathfinder out of trouble, so terrain cannot skew a check.
+      LEVEL_TYPE: minecraft:flat
+      GENERATE_STRUCTURES: "false"
+      SPAWN_PROTECTION: "0"
+      SPAWN_MONSTERS: "FALSE"
+      VIEW_DISTANCE: "6"
+      MEMORY: 2G
+      # OPS is unusable here: resolving an offline name through Playerdb fails and halts startup.
+      # Opping from the console after boot lets the server derive the offline UUID itself.
+      RCON_CMDS_STARTUP: |
+        op ${BOT_USERNAME:-azalea_bot}
+        difficulty peaceful
+        weather clear 1000000
+        time set day
+    volumes:
+      - data:/data
+    healthcheck:
+      test: ["CMD", "mc-health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+volumes:
+  data:

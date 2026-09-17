@@ -95,12 +95,19 @@ impl Seen {
     /// How it reads in a sentence: the name, and what it is after it when a name hides that. An
     /// unnamed cow reads "cow" and not "cow (cow)".
     fn named(&self) -> String {
-        if self.label == self.kind { self.label.clone() } else { format!("{} ({})", self.label, self.kind) }
+        if self.label == self.kind {
+            self.label.clone()
+        } else {
+            format!("{} ({})", self.label, self.kind)
+        }
     }
 
     /// A label with something a player could read in it.
     fn readable(&self) -> Option<String> {
-        self.says.as_ref().map(ToString::to_string).filter(|said| !said.trim().is_empty())
+        self.says
+            .as_ref()
+            .map(ToString::to_string)
+            .filter(|said| !said.trim().is_empty())
     }
 
     fn describe(&self, nameplate: Option<&Seen>) -> Value {
@@ -134,10 +141,34 @@ fn nearby(client: &Client) -> Vec<Seen> {
 
     let mut ecs = client.ecs.write();
     let mut query = ecs.query_filtered::<(
-        (Entity, &WorldName, &Position, &EntityKindComponent, Option<&MinecraftEntityId>, Option<&EntityDimensions>),
-        (Option<&CustomName>, Option<&EntityUuid>, Has<Player>, Has<AbstractInsentient>),
-        (Option<&Text>, Has<AbstractDisplay>, Option<&Invisible>, Option<&CustomNameVisible>),
-        (Has<AbstractLiving>, Has<Dead>, Has<ArmorStand>, Option<&ArmorStandMarker>, Has<AbstractMinecart>, Has<AbstractBoat>),
+        (
+            Entity,
+            &WorldName,
+            &Position,
+            &EntityKindComponent,
+            Option<&MinecraftEntityId>,
+            Option<&EntityDimensions>,
+        ),
+        (
+            Option<&CustomName>,
+            Option<&EntityUuid>,
+            Has<Player>,
+            Has<AbstractInsentient>,
+        ),
+        (
+            Option<&Text>,
+            Has<AbstractDisplay>,
+            Option<&Invisible>,
+            Option<&CustomNameVisible>,
+        ),
+        (
+            Has<AbstractLiving>,
+            Has<Dead>,
+            Has<ArmorStand>,
+            Option<&ArmorStandMarker>,
+            Has<AbstractMinecart>,
+            Has<AbstractBoat>,
+        ),
         (Has<Interaction>, Option<&InteractionWidth>, Option<&InteractionHeight>),
         (Option<&ItemDisplayItemStack>, Option<&BlockDisplayBlockState>),
     ), Without<LocalEntity>>();
@@ -159,16 +190,26 @@ fn nearby(client: &Client) -> Vec<Seen> {
                 (None, Some(info)) if player => info.profile.name.clone(),
                 _ => kind.to_owned(),
             };
-            let (dx, dy, dz) = ((from.x - position.x) as f32, (from.y - position.y) as f32, (from.z - position.z) as f32);
+            let (dx, dy, dz) = (
+                (from.x - position.x) as f32,
+                (from.y - position.y) as f32,
+                (from.z - position.z) as f32,
+            );
 
             /* An armor stand is a hologram when it is only there to show its name. */
             let hologram = stand && invisible.is_some_and(|flag| flag.0) && name_visible.is_some_and(|flag| flag.0);
-            let says = text.map(|text| (*text.0).clone()).or_else(|| custom.clone().filter(|_| hologram));
+            let says = text
+                .map(|text| (*text.0).clone())
+                .or_else(|| custom.clone().filter(|_| hologram));
 
             /* An interaction entity's size is its own metadata, where azalea gives it none. */
             let bounds = match (interaction, width, height) {
-                (true, Some(width), Some(height)) => EntityDimensions::new(width.0, height.0).make_bounding_box(**position),
-                _ => dimensions.map_or_else(|| EntityDimensions::new(0.0, 0.0), Clone::clone).make_bounding_box(**position),
+                (true, Some(width), Some(height)) => {
+                    EntityDimensions::new(width.0, height.0).make_bounding_box(**position)
+                }
+                _ => dimensions
+                    .map_or_else(|| EntityDimensions::new(0.0, 0.0), Clone::clone)
+                    .make_bounding_box(**position),
             };
 
             Seen {
@@ -225,7 +266,9 @@ fn owner(label: &Seen, entities: &[Seen]) -> Option<usize> {
         .filter(|(_, seen)| seen.entity != label.entity && !seen.display && seen.says.is_none() && seen.pickable)
         .filter(|(_, seen)| under(label.position - seen.position))
         .min_by(|(_, a), (_, b)| {
-            a.position.distance_squared_to(label.position).total_cmp(&b.position.distance_squared_to(label.position))
+            a.position
+                .distance_squared_to(label.position)
+                .total_cmp(&b.position.distance_squared_to(label.position))
         })
         .map(|(index, _)| index)
 }
@@ -243,9 +286,9 @@ fn nameplates(entities: &[Seen]) -> HashMap<usize, usize> {
             continue;
         };
         let at = entities[owner].position;
-        let closer = labels
-            .get(&owner)
-            .is_none_or(|kept| label.position.distance_squared_to(at) < entities[*kept].position.distance_squared_to(at));
+        let closer = labels.get(&owner).is_none_or(|kept| {
+            label.position.distance_squared_to(at) < entities[*kept].position.distance_squared_to(at)
+        });
         if closer {
             labels.insert(owner, index);
         }
@@ -275,11 +318,10 @@ impl Selector {
         };
         let crosshair = (args["crosshair"].as_bool() == Some(true)).then_some(Selector::Crosshair);
 
-        let mut given: Vec<(&str, Selector)> =
-            [("name", name), ("label", label), ("id", id), ("crosshair", crosshair)]
-                .into_iter()
-                .filter_map(|(word, selector)| selector.map(|selector| (word, selector)))
-                .collect();
+        let mut given: Vec<(&str, Selector)> = [("name", name), ("label", label), ("id", id), ("crosshair", crosshair)]
+            .into_iter()
+            .filter_map(|(word, selector)| selector.map(|selector| (word, selector)))
+            .collect();
 
         if given.len() == 1 {
             return Ok(given.remove(0).1);
@@ -305,10 +347,18 @@ impl Selector {
                 .into_iter()
                 .find(|seen| seen.id == Some(*id))
                 .map(|seen| (seen, None))
-                .ok_or_else(|| Failure::refused("NO_SUCH_ENTITY", format!("No entity with id {id} is in the bot's world."))),
-            Selector::Crosshair => crosshair(client)
-                .map(|(seen, at)| (seen, Some(at)))
-                .ok_or_else(|| Failure::refused("NOT_LOOKING_AT_ENTITY", "The crosshair is not on an entity within reach.")),
+                .ok_or_else(|| {
+                    Failure::refused(
+                        "NO_SUCH_ENTITY",
+                        format!("No entity with id {id} is in the bot's world."),
+                    )
+                }),
+            Selector::Crosshair => crosshair(client).map(|(seen, at)| (seen, Some(at))).ok_or_else(|| {
+                Failure::refused(
+                    "NOT_LOOKING_AT_ENTITY",
+                    "The crosshair is not on an entity within reach.",
+                )
+            }),
         }
     }
 }
@@ -317,7 +367,10 @@ impl Selector {
 /// instead. Being told what is nearby is the difference between "my NPC did not spawn" and "I
 /// spelled its name wrong".
 fn require(client: &Client, query: &str, max_distance: f64) -> Result<Seen, Failure> {
-    let mut nearby: Vec<Seen> = nearby(client).into_iter().filter(|seen| f64::from(seen.distance) <= max_distance).collect();
+    let mut nearby: Vec<Seen> = nearby(client)
+        .into_iter()
+        .filter(|seen| f64::from(seen.distance) <= max_distance)
+        .collect();
 
     if let Some(index) = nearby.iter().position(|seen| seen.matches(query)) {
         return Ok(nearby.swap_remove(index));
@@ -328,11 +381,18 @@ fn require(client: &Client, query: &str, max_distance: f64) -> Result<Seen, Fail
         .take(MAX_LISTED)
         .map(|seen| format!("{} ({} blocks away)", seen.label, one_decimal(f64::from(seen.distance))))
         .collect();
-    let instead = if listed.is_empty() { "Nothing else is in range either.".to_owned() } else { format!("In range: {}.", listed.join(", ")) };
+    let instead = if listed.is_empty() {
+        "Nothing else is in range either.".to_owned()
+    } else {
+        format!("In range: {}.", listed.join(", "))
+    };
 
     Err(Failure::refused(
         "NO_SUCH_ENTITY",
-        format!("Nothing within {} blocks is named like \"{query}\". {instead}", super::text::plain(max_distance)),
+        format!(
+            "Nothing within {} blocks is named like \"{query}\". {instead}",
+            super::text::plain(max_distance)
+        ),
     ))
 }
 
@@ -341,9 +401,13 @@ fn under_label(client: &Client, query: &str, max_distance: f64) -> Result<Seen, 
     let mut entities = nearby(client);
     let needle = query.to_lowercase();
 
-    let found = entities.iter().filter(|seen| seen.readable().is_some_and(|said| said.to_lowercase().contains(&needle))).find_map(|label| {
-        owner(label, &entities).filter(|owner| f64::from(entities[*owner].distance) <= max_distance)
-    });
+    let found = entities
+        .iter()
+        .filter(|seen| {
+            seen.readable()
+                .is_some_and(|said| said.to_lowercase().contains(&needle))
+        })
+        .find_map(|label| owner(label, &entities).filter(|owner| f64::from(entities[*owner].distance) <= max_distance));
     if let Some(owner) = found {
         return Ok(entities.swap_remove(owner));
     }
@@ -351,10 +415,17 @@ fn under_label(client: &Client, query: &str, max_distance: f64) -> Result<Seen, 
     let listed: Vec<String> = entities
         .iter()
         .filter(|seen| f64::from(seen.distance) <= max_distance)
-        .filter_map(|seen| seen.readable().map(|said| format!("{said} ({} blocks away)", one_decimal(f64::from(seen.distance)))))
+        .filter_map(|seen| {
+            seen.readable()
+                .map(|said| format!("{said} ({} blocks away)", one_decimal(f64::from(seen.distance))))
+        })
         .take(MAX_LISTED)
         .collect();
-    let instead = if listed.is_empty() { "No label is in range either.".to_owned() } else { format!("Labels in range: {}.", listed.join(", ")) };
+    let instead = if listed.is_empty() {
+        "No label is in range either.".to_owned()
+    } else {
+        format!("Labels in range: {}.", listed.join(", "))
+    };
 
     Err(Failure::refused(
         "NO_SUCH_LABEL",
@@ -371,23 +442,36 @@ fn under_label(client: &Client, query: &str, max_distance: f64) -> Result<Seen, 
 /// a model is clicked through is never under its crosshair. The walk is the game's: blocks cut the
 /// ray short, the nearest box the ray enters wins, and an entity beyond the entity reach is missed.
 fn crosshair(client: &Client) -> Option<(Seen, Vec3)> {
-    let eyes = client.position().up(f64::from(client.get_component::<EntityDimensions>()?.eye_height));
+    let eyes = client
+        .position()
+        .up(f64::from(client.get_component::<EntityDimensions>()?.eye_height));
     let look = client.direction();
     let (entity_reach, block_reach) = {
         let attributes = client.get_component::<Attributes>()?;
-        (attributes.entity_interaction_range.calculate(), attributes.block_interaction_range.calculate())
+        (
+            attributes.entity_interaction_range.calculate(),
+            attributes.block_interaction_range.calculate(),
+        )
     };
 
     let reach = entity_reach.max(block_reach);
     let block = pick_block(look, eyes, &client.world().read().chunks, reach);
-    let limit = if block.miss { reach } else { block.location.distance_to(eyes) };
+    let limit = if block.miss {
+        reach
+    } else {
+        block.location.distance_to(eyes)
+    };
     let end = eyes + view_vector(look) * limit;
 
     nearby(client)
         .into_iter()
         .filter(|seen| seen.pickable)
         .filter_map(|seen| {
-            let at = if seen.bounds.contains(eyes) { Some(eyes) } else { seen.bounds.clip(eyes, end) }?;
+            let at = if seen.bounds.contains(eyes) {
+                Some(eyes)
+            } else {
+                seen.bounds.clip(eyes, end)
+            }?;
             Some((at.distance_to(eyes), seen, at))
         })
         .filter(|(distance, ..)| *distance < entity_reach)
@@ -417,7 +501,9 @@ fn max_distance(args: &Value, fallback: f64) -> f64 {
 /// Where an entity is now, and where its eyes are; nothing once it has left the world.
 fn whereabouts(client: &Client, entity: Entity) -> Option<(Vec3, Vec3)> {
     let position = **client.get_entity_component::<Position>(entity)?;
-    let eyes = client.get_entity_component::<EntityDimensions>(entity).map_or(0.0, |dimensions| dimensions.eye_height);
+    let eyes = client
+        .get_entity_component::<EntityDimensions>(entity)
+        .map_or(0.0, |dimensions| dimensions.eye_height);
     Some((position, position.up(f64::from(eyes))))
 }
 
@@ -484,7 +570,8 @@ pub const ATTACK_ENTITY: Tool = Tool {
 
                 let look = if matches!(selector, Selector::Crosshair) {
                     /* Not followed: a target picked by where the bot looks is hit only while it is there. */
-                    let still = in_world(&bot, |game| crosshair(&game.client))?.is_some_and(|(seen, _)| seen.entity == target.entity);
+                    let still = in_world(&bot, |game| crosshair(&game.client))?
+                        .is_some_and(|(seen, _)| seen.entity == target.entity);
                     if !still {
                         return Ok(Answer::text(format!(
                             "Hit {label} {landed} time(s) out of {times}; it left the crosshair before the rest landed."
@@ -603,7 +690,10 @@ pub const INTERACT_ENTITY: Tool = Tool {
                 let mut approach = Approach::new();
                 loop {
                     let Some((position, _)) = in_world(&bot, |game| whereabouts(&game.client, target.entity))? else {
-                        return Err(Failure::refused("NO_SUCH_ENTITY", format!("{} left the world before it was reached.", target.named())));
+                        return Err(Failure::refused(
+                            "NO_SUCH_ENTITY",
+                            format!("{} left the world before it was reached.", target.named()),
+                        ));
                     };
                     if approach.reached(&bot, position, &target.label)? {
                         break;
@@ -634,14 +724,19 @@ pub(super) fn attack(client: &Client, entity: Entity, look: Option<Vec3>) -> Res
         .ok_or_else(|| Failure::refused("NO_SUCH_ENTITY", "the entity left the world before it was hit."))?;
 
     let mut packet = Vec::new();
-    let _ = ServerboundAttack { entity_id: target }.into_variant().id().azalea_write_var(&mut packet);
+    let _ = ServerboundAttack { entity_id: target }
+        .into_variant()
+        .id()
+        .azalea_write_var(&mut packet);
     let _ = target.azalea_write_var(&mut packet);
 
     if let Some(look) = look {
         client.look_at(look);
     }
     client
-        .with_raw_connection_mut(|mut connection| connection.net_conn().map(|network| network.write_raw(&packet).is_ok()))
+        .with_raw_connection_mut(|mut connection| {
+            connection.net_conn().map(|network| network.write_raw(&packet).is_ok())
+        })
         .filter(|written| *written)
         .ok_or_else(Failure::not_in_game)?;
     swing(client);
@@ -660,7 +755,9 @@ pub(super) fn attack(client: &Client, entity: Entity, look: Option<Vec3>) -> Res
 pub(super) fn interact(client: &Client, entity: Entity, aimed: Option<Vec3>) -> Result<(), Failure> {
     let lost = || Failure::refused("NO_SUCH_ENTITY", "the entity left the world before it was clicked.");
     let (position, eyes) = whereabouts(client, entity).ok_or_else(lost)?;
-    let id = *client.get_entity_component::<MinecraftEntityId>(entity).ok_or_else(lost)?;
+    let id = *client
+        .get_entity_component::<MinecraftEntityId>(entity)
+        .ok_or_else(lost)?;
 
     let at = aimed.unwrap_or_else(|| {
         client.look_at(eyes);

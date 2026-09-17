@@ -14,13 +14,13 @@ use azalea::ecs::prelude::*;
 use azalea::packet::config::ReceiveConfigPacketEvent;
 use azalea::packet::game::ReceiveGamePacketEvent;
 use azalea::protocol::common::recipe::SlotDisplayData;
+use azalea::protocol::common::tags::TagMap;
 use azalea::protocol::packets::config::ClientboundConfigPacket;
 use azalea::protocol::packets::game::ClientboundGamePacket;
 use azalea::protocol::packets::game::c_merchant_offers::ClientboundMerchantOffers;
 use azalea::protocol::packets::game::c_recipe_book_add::RecipeDisplayEntry;
 use azalea::protocol::packets::game::c_update_recipes::SingleInputEntry;
 use azalea::protocol::packets::game::s_interact::InteractionHand;
-use azalea::protocol::common::tags::TagMap;
 use simdnbt::owned::NbtCompound;
 
 pub struct MenusPlugin;
@@ -80,12 +80,17 @@ impl Known {
     }
 
     pub fn entry(&self, registry: &str, id: usize) -> Option<&(Identifier, Option<NbtCompound>)> {
-        self.registries.get(&Identifier::new(registry)).and_then(|entries| entries.get(id))
+        self.registries
+            .get(&Identifier::new(registry))
+            .and_then(|entries| entries.get(id))
     }
 
     fn replace_tags(&mut self, map: &TagMap) {
         for (registry, tags) in &map.0 {
-            let kept = tags.iter().map(|tag| (tag.name.clone(), tag.elements.clone())).collect();
+            let kept = tags
+                .iter()
+                .map(|tag| (tag.name.clone(), tag.elements.clone()))
+                .collect();
             self.tags.insert(registry.clone(), kept);
         }
     }
@@ -140,7 +145,9 @@ fn keep_config(mut received: MessageReader<ReceiveConfigPacketEvent>, mut player
         };
         match packet.as_ref() {
             ClientboundConfigPacket::UpdateTags(p) => known.replace_tags(&p.tags),
-            ClientboundConfigPacket::RegistryData(p) if KEPT_REGISTRIES.contains(&p.registry_id.to_string().as_str()) => {
+            ClientboundConfigPacket::RegistryData(p)
+                if KEPT_REGISTRIES.contains(&p.registry_id.to_string().as_str()) =>
+            {
                 known.registries.insert(p.registry_id.clone(), p.entries.clone());
             }
             _ => {}
@@ -164,7 +171,9 @@ pub fn first_item(display: &SlotDisplayData, known: &Known) -> Option<(azalea::r
             .and_then(|id| ItemKind::from_u32(*id as u32))
             .map(|item| (item, 1)),
         SlotDisplayData::WithRemainder(remainder) => first_item(&remainder.input, known),
-        SlotDisplayData::Composite(composite) => composite.contents.iter().find_map(|display| first_item(display, known)),
+        SlotDisplayData::Composite(composite) => {
+            composite.contents.iter().find_map(|display| first_item(display, known))
+        }
         _ => None,
     }
 }

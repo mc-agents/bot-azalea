@@ -1,7 +1,7 @@
 use azalea::core::entity_id::MinecraftEntityId;
 use azalea::entity::indexing::EntityIdIndex;
-use azalea::entity::{Dead, EntityKindComponent};
 use azalea::entity::metadata::{AirSupply, Health};
+use azalea::entity::{Dead, EntityKindComponent};
 use azalea::local_player::LocalGameMode;
 use azalea::world::WorldName;
 use serde_json::{Value, json};
@@ -61,7 +61,9 @@ fn vehicle(game: &Game) -> Value {
     };
     let kind = |id: i32| {
         let entity = loaded(id)?;
-        client.get_entity_component::<EntityKindComponent>(entity).map(|kind| plain(kind.0.to_str()))
+        client
+            .get_entity_component::<EntityKindComponent>(entity)
+            .map(|kind| plain(kind.0.to_str()))
     };
 
     let hud = game.hud.borrow();

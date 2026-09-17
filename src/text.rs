@@ -60,12 +60,20 @@ pub struct Line {
 impl Line {
     pub fn of(component: &FormattedText) -> Line {
         let raw = component.to_string();
-        Line { readable: readable(&raw), shown: shown(component, &raw), raw }
+        Line {
+            readable: readable(&raw),
+            shown: shown(component, &raw),
+            raw,
+        }
     }
 
     /// A line that reads one way only: a sound's or a particle's id.
     pub fn plain(id: String) -> Line {
-        Line { raw: id.clone(), readable: id.clone(), shown: id }
+        Line {
+            raw: id.clone(),
+            readable: id.clone(),
+            shown: id,
+        }
     }
 
     pub fn matches(&self, pattern: &Regex) -> bool {
@@ -112,7 +120,10 @@ fn shown(component: &FormattedText, raw: &str) -> String {
         .iter()
         .filter(|(text, _)| !blank(text))
         .map(|(text, font)| match font {
-            Some(font) => format!("[{}] {text}", font.split_once(':').map_or(font.as_str(), |(_, name)| name)),
+            Some(font) => format!(
+                "[{}] {text}",
+                font.split_once(':').map_or(font.as_str(), |(_, name)| name)
+            ),
             None => text.clone(),
         })
         .collect::<Vec<_>>()
@@ -139,12 +150,19 @@ fn leaves(component: &FormattedText) -> Vec<Leaf> {
     */
     component.to_custom_format(
         |_, inherited| {
-            *style.borrow_mut() = (inherited.font.clone(), inherited.color.as_ref().map(ToString::to_string));
+            *style.borrow_mut() = (
+                inherited.font.clone(),
+                inherited.color.as_ref().map(ToString::to_string),
+            );
             (String::new(), String::new())
         },
         |text| {
             let (font, color) = style.borrow().clone();
-            leaves.borrow_mut().push(Leaf { text: text.to_owned(), font, color });
+            leaves.borrow_mut().push(Leaf {
+                text: text.to_owned(),
+                font,
+                color,
+            });
             String::new()
         },
         |_| String::new(),
@@ -163,7 +181,11 @@ fn spacer(readable: &str, raw: &str) -> bool {
 /// The font by its full name, and none for the default one, which is what names no label.
 fn font(font: Option<&str>) -> Option<String> {
     let font = font?;
-    let named = if font.contains(':') { font.to_owned() } else { format!("minecraft:{font}") };
+    let named = if font.contains(':') {
+        font.to_owned()
+    } else {
+        format!("minecraft:{font}")
+    };
     (named != "minecraft:default").then_some(named)
 }
 
@@ -242,8 +264,14 @@ mod tests {
 
     #[test]
     fn a_font_is_labelled_without_its_namespace() {
-        assert_eq!(line(json!({"text": "Quest", "font": "hyperfarm:sidebar/title"})).shown, "[sidebar/title] Quest");
-        assert_eq!(line(json!({"text": "Quest", "font": "sidebar/title"})).shown, "[sidebar/title] Quest");
+        assert_eq!(
+            line(json!({"text": "Quest", "font": "hyperfarm:sidebar/title"})).shown,
+            "[sidebar/title] Quest"
+        );
+        assert_eq!(
+            line(json!({"text": "Quest", "font": "sidebar/title"})).shown,
+            "[sidebar/title] Quest"
+        );
     }
 
     /// A component built from a string keeps its codes as text, the way an owner named "§7" does.

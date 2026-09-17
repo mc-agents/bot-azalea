@@ -42,7 +42,9 @@ fn open_book(client: &Client) -> Result<Value, Failure> {
                 return Err(Failure::refused(
                     "NO_BOOK",
                     match &window {
-                        None => "no book is open. Use a written book, or right-click a lectern with one on it.".to_owned(),
+                        None => {
+                            "no book is open. Use a written book, or right-click a lectern with one on it.".to_owned()
+                        }
                         Some(window) => format!("{} is open, and it is not a book.", screen(&window.menu)),
                     },
                 ));
@@ -68,11 +70,16 @@ fn open_book(client: &Client) -> Result<Value, Failure> {
     the stack it shows, and a book read from the hand is whichever hand holds a written one.
     */
     let written = if source == "lectern" {
-        book.get_component::<WrittenBookContent>().map(|content| content.into_owned())
+        book.get_component::<WrittenBookContent>()
+            .map(|content| content.into_owned())
     } else {
         [InteractionHand::MainHand, InteractionHand::OffHand]
             .into_iter()
-            .find_map(|hand| held(client, hand).get_component::<WrittenBookContent>().map(|content| content.into_owned()))
+            .find_map(|hand| {
+                held(client, hand)
+                    .get_component::<WrittenBookContent>()
+                    .map(|content| content.into_owned())
+            })
     };
     if let Some(written) = written {
         data["title"] = json!(written.title.raw);
@@ -98,6 +105,12 @@ fn pages(book: &ItemStack) -> Vec<FormattedText> {
         return written.pages.iter().map(|page| page.raw.clone()).collect();
     }
     book.get_component::<WritableBookContent>()
-        .map(|writable| writable.pages.iter().map(|page| FormattedText::from(page.raw.clone())).collect())
+        .map(|writable| {
+            writable
+                .pages
+                .iter()
+                .map(|page| FormattedText::from(page.raw.clone()))
+                .collect()
+        })
         .unwrap_or_default()
 }

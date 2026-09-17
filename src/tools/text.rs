@@ -32,7 +32,12 @@ pub fn plain(value: f64) -> String {
 pub fn one_decimal(value: f64) -> String {
     let shortest = value.abs().to_string();
     let (whole, fraction) = shortest.split_once('.').unwrap_or((&shortest, ""));
-    let digit = |index: usize| fraction.as_bytes().get(index).map_or(0, |digit| u64::from(digit - b'0'));
+    let digit = |index: usize| {
+        fraction
+            .as_bytes()
+            .get(index)
+            .map_or(0, |digit| u64::from(digit - b'0'))
+    };
 
     let whole: u64 = whole.parse().unwrap_or_default();
     let tenths = whole * 10 + digit(0) + u64::from(digit(1) >= 5);

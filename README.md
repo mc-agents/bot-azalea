@@ -34,18 +34,37 @@ is pinned in `rust-toolchain.toml`. Nothing needs installing on the host: the im
 a container.
 
 ```sh
-./hack/image.sh                 # bot-azalea:local-mc26.1.2
+./hack/image.sh                          # bot-azalea:local-mc26.1.2
 ./hack/image.sh my:tag
-python3 hack/sync-catalog.py    # after mcp-server's catalogue changes
+python3 hack/sync-catalog.py --from v0.61.3   # pin the catalogue of an mcp-server release
 ```
 
 One Minecraft version, 26.1.2, because one azalea release speaks one protocol: `0.16.0+mc26.1` is
 protocol 775, which is 26.1.2's.
 
+`src/catalog.rs` is generated and names the mcp-server release it came from as `CATALOG_SOURCE`.
+CI regenerates it from that release and fails on any difference, so a catalogue change is a
+diff to review, never a hash the server quietly stops accepting. CI also runs `cargo fmt --check`,
+`cargo clippy -- -D warnings` and `cargo test` on the nightly `rust-toolchain.toml` pins, then
+builds the image and runs it against a Paper server (`dev/compose.yml`, `dev/smoke.py`) and
+mcp-server's `dev/conform.py`. A push whose changes are outside what the image is built from
+neither publishes nor tags; one that ships gets `v<version>` and a GitHub release with the
+commits since the previous tag.
+
+```sh
+docker compose -f dev/compose.yml up -d              # Paper 26.1.2, offline, flat, port 25578
+python3 dev/smoke.py --port 8765 --server host.docker.internal 25578
+docker run --rm --add-host host.docker.internal:host-gateway \
+    -e MCP_SERVER_HOST=host.docker.internal -e BOT_NAME=azalea_bot bot-azalea:local-mc26.1.2
+```
+
 ## Running it
 
 It reads everything from the environment, as the protocol document lists: `MCP_SERVER_HOST`,
-`MCP_SERVER_PORT`, `BOT_NAME`, `HEALTH_PORT`, `RECONNECT_MIN_MS`, `RECONNECT_MAX_MS`.
+`MCP_SERVER_PORT`, `BOT_NAME`, `HEALTH_PORT`, `RECONNECT_MIN_MS`, `RECONNECT_MAX_MS`, and
+`BOT_LINK_TOKEN`, which goes into `hello` as `linkToken` when set so a server that holds one can
+tell its own bots from anything else that reached the port. The operator sets it from the
+server's link Secret; a bot run by hand against a server without one leaves it unset.
 
 ```sh
 docker run --rm -e MCP_SERVER_HOST=host.docker.internal -e BOT_NAME=a1 bot-azalea:local-mc26.1.2

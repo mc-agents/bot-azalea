@@ -46,7 +46,9 @@ pub(super) fn player_menu(inventory: &Inventory) -> Menu {
 
 /// Ticks left on a stack's cooldown group, counted against the ticks the bot has run.
 fn cooldown(bot: &Bot, game: &Game, stack: &ItemStack) -> Option<u64> {
-    game.hud.borrow().cooldown_left(&stacks::cooldown_group(stack), *bot.ticks.borrow())
+    game.hud
+        .borrow()
+        .cooldown_left(&stacks::cooldown_group(stack), *bot.ticks.borrow())
 }
 
 pub const LIST_INVENTORY: Tool = Tool {
@@ -134,7 +136,9 @@ pub const EQUIP_ITEM: Tool = Tool {
                 the server first and used whatever hand was selected before.
                 */
                 "hand" if (HOTBAR_START..=HOTBAR_END).contains(&source) => {
-                    alive(&bot, |game| game.client.set_selected_hotbar_slot((source - HOTBAR_START) as u8))?;
+                    alive(&bot, |game| {
+                        game.client.set_selected_hotbar_slot((source - HOTBAR_START) as u8)
+                    })?;
                     tick(&bot).await;
                 }
                 "hand" => {
@@ -144,7 +148,11 @@ pub const EQUIP_ITEM: Tool = Tool {
                     click(&bot, INVENTORY_WINDOW, source as i16, OFF_HAND, ClickType::Swap).await?;
                 }
                 "head" | "torso" | "legs" | "feet" => {
-                    let worn = WORN_HEAD + ["head", "torso", "legs", "feet"].iter().position(|part| *part == destination).unwrap_or(3);
+                    let worn = WORN_HEAD
+                        + ["head", "torso", "legs", "feet"]
+                            .iter()
+                            .position(|part| *part == destination)
+                            .unwrap_or(3);
                     wear(&bot, source, worn).await?;
                 }
                 other => return Err(Failure::bad_args(format!("unknown destination {other}"))),
@@ -184,14 +192,23 @@ pub const GIVE_ITEM: Tool = Tool {
 
             let slot = alive(&bot, |game| {
                 let client = &game.client;
-                let creative = client.get_component::<PlayerAbilities>().is_some_and(|abilities| abilities.instant_break);
+                let creative = client
+                    .get_component::<PlayerAbilities>()
+                    .is_some_and(|abilities| abilities.instant_break);
                 if !creative {
                     let mode = game_mode(client.get_component::<LocalGameMode>().map(|mode| mode.current));
-                    return Err(Failure::refused("NOT_CREATIVE", format!("The bot is in {mode} mode; give-item needs creative.")));
+                    return Err(Failure::refused(
+                        "NOT_CREATIVE",
+                        format!("The bot is in {mode} mode; give-item needs creative."),
+                    ));
                 }
 
-                let kind = item(&item_name)
-                    .ok_or_else(|| Failure::refused("NO_SUCH_ITEM", format!("\"{item_name}\" is not an item in this version.")))?;
+                let kind = item(&item_name).ok_or_else(|| {
+                    Failure::refused(
+                        "NO_SUCH_ITEM",
+                        format!("\"{item_name}\" is not an item in this version."),
+                    )
+                })?;
 
                 let menu = player_menu(&client.component::<Inventory>());
                 let slot = match &args["slot"] {
@@ -218,7 +235,10 @@ pub const GIVE_ITEM: Tool = Tool {
                         }
                     }
                 });
-                client.write_packet(ServerboundSetCreativeModeSlot { slot_num: slot as u16, item_stack: stack });
+                client.write_packet(ServerboundSetCreativeModeSlot {
+                    slot_num: slot as u16,
+                    item_stack: stack,
+                });
                 Ok(slot)
             })??;
 

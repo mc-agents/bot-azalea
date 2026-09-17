@@ -22,6 +22,12 @@ use crate::config::Config;
 /// bot that is one process among fifty should not fan out a worker per core to do it.
 fn main() {
     tracing_subscriber::fmt().with_target(false).init();
+    tracing::info!(
+        "bot-azalea {} with catalogue {} from mcp-server {}",
+        env!("CARGO_PKG_VERSION"),
+        catalog::CATALOG_VERSION,
+        catalog::CATALOG_SOURCE
+    );
 
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

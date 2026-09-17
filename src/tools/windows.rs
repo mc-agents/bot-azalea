@@ -19,8 +19,8 @@ use super::args::{boolean, integer, plain, position, text, text_or, written};
 use super::text::component;
 use super::{Tool, alive, in_world, stacks, tick};
 use crate::bot::Bot;
-use crate::menus::Menus;
 use crate::calls::{Answer, Failure, Outcome};
+use crate::menus::Menus;
 use crate::text::Line;
 
 /// A player inventory is 36 slots wherever it is attached.
@@ -46,8 +46,16 @@ const SETTLE: Duration = Duration::from_secs(2);
 /// Ticks between clicking a container and giving up on its window.
 const OPEN_TICKS: u32 = 100;
 
-const CONTAINER_BLOCKS: &[&str] =
-    &["chest", "trapped_chest", "ender_chest", "barrel", "hopper", "dispenser", "dropper", "shulker_box"];
+const CONTAINER_BLOCKS: &[&str] = &[
+    "chest",
+    "trapped_chest",
+    "ender_chest",
+    "barrel",
+    "hopper",
+    "dispenser",
+    "dropper",
+    "shulker_box",
+];
 
 /// What azalea leaves out of the packets that fill a window, put back.
 ///
@@ -214,7 +222,10 @@ pub(super) fn kind(menu: &Menu) -> &'static str {
 fn out_of_range(slot: i64, menu: &Menu) -> Failure {
     Failure::refused(
         "SLOT_OUT_OF_RANGE",
-        format!("Slot {slot} is outside the window, whose slots run 0-{}", menu.len() as i64 - 1),
+        format!(
+            "Slot {slot} is outside the window, whose slots run 0-{}",
+            menu.len() as i64 - 1
+        ),
     )
 }
 
@@ -234,7 +245,13 @@ fn out_of_range(slot: i64, menu: &Menu) -> Failure {
 /// that to land, so what a tool reads after is the server's window and not the plugin's first draw.
 /// A redraw the plugin schedules for a later tick, or one a timer of its own sends while the click
 /// is in flight, is still taken for the click's answer, or missed.
-pub async fn click(bot: &Bot, window: i32, slot: i16, button: u8, click_type: ClickType) -> Result<Option<Value>, Failure> {
+pub async fn click(
+    bot: &Bot,
+    window: i32,
+    slot: i16,
+    button: u8,
+    click_type: ClickType,
+) -> Result<Option<Value>, Failure> {
     let mut contents = bot.contents.subscribe();
     contents.borrow_and_update();
     let mut closed = bot.closed.subscribe();
@@ -321,7 +338,9 @@ fn inventory_item(inventory: &Inventory, index: u8) -> ItemStack {
     match index {
         0..=8 => {
             let menu = inventory.menu();
-            menu.slot(*menu.hotbar_slots_range().start() + index as usize).cloned().unwrap_or_default()
+            menu.slot(*menu.hotbar_slots_range().start() + index as usize)
+                .cloned()
+                .unwrap_or_default()
         }
         _ => inventory.inventory_menu.as_player().offhand.clone(),
     }
@@ -349,7 +368,9 @@ pub const CLOSE_WINDOW: Tool = Tool {
             let credits = in_world(&bot, |game| {
                 let showing = std::mem::take(&mut game.hud.borrow_mut().credits);
                 if showing {
-                    game.client.write_packet(ServerboundClientCommand { action: Action::PerformRespawn });
+                    game.client.write_packet(ServerboundClientCommand {
+                        action: Action::PerformRespawn,
+                    });
                 }
                 showing
             })?;
@@ -370,7 +391,9 @@ pub const CLOSE_WINDOW: Tool = Tool {
             /* A dialog is drawn over any window, and Escape closes it first, running its exit button. */
             let dialog = in_world(&bot, |game| {
                 let mut hud = game.hud.borrow_mut();
-                let Some(dialog) = hud.dialog.as_ref() else { return Ok(None) };
+                let Some(dialog) = hud.dialog.as_ref() else {
+                    return Ok(None);
+                };
                 if !dialog.closes_on_escape() {
                     return Err(Failure::refused(
                         "SCREEN_STAYS_OPEN",
@@ -394,7 +417,10 @@ pub const CLOSE_WINDOW: Tool = Tool {
                 ));
             }
             if let Some((title, screen)) = in_world(&bot, super::editors::close)? {
-                return Ok(Answer::data("close-window", json!({"closed": title, "closedComponent": title, "screen": screen})));
+                return Ok(Answer::data(
+                    "close-window",
+                    json!({"closed": title, "closedComponent": title, "screen": screen}),
+                ));
             }
 
             /* Asking to close nothing is a no-op, not a mistake. */
@@ -402,7 +428,9 @@ pub const CLOSE_WINDOW: Tool = Tool {
                 return Ok(Answer::data("close-window", json!({"closed": null, "screen": null})));
             };
 
-            alive(&bot, |game| ContainerHandleRef::new(window.id, game.client.clone()).close())?;
+            alive(&bot, |game| {
+                ContainerHandleRef::new(window.id, game.client.clone()).close()
+            })?;
             if matches!(window.menu, Menu::Lectern { .. }) {
                 return Ok(Answer::data("close-window", untitled("lectern")));
             }
@@ -438,22 +466,22 @@ pub const WAIT_FOR_WINDOW: Tool = Tool {
             it was written in TypeScript. The subset a caller writes for a window title is the same
             here, and `is_match` finds anywhere in the title the way RegExp.test does.
             */
-            let pattern = source
-                .as_deref()
-                .map(Regex::new)
-                .transpose()
-                .map_err(|invalid| {
-                    Failure::bad_args(format!(
-                        "\"{}\" is not a valid regular expression: {invalid}",
-                        source.as_deref().unwrap_or_default()
-                    ))
-                })?;
+            let pattern = source.as_deref().map(Regex::new).transpose().map_err(|invalid| {
+                Failure::bad_args(format!(
+                    "\"{}\" is not a valid regular expression: {invalid}",
+                    source.as_deref().unwrap_or_default()
+                ))
+            })?;
 
             let started = Instant::now();
             let window = loop {
                 let found = in_world(&bot, |game| {
                     filled(&bot, &game.client)
-                        .filter(|window| pattern.as_ref().is_none_or(|pattern| Line::of(&window.title).matches(pattern)))
+                        .filter(|window| {
+                            pattern
+                                .as_ref()
+                                .is_none_or(|pattern| Line::of(&window.title).matches(pattern))
+                        })
                         .map(|window| describe(&window))
                 })?;
                 if found.is_some() || started.elapsed().as_millis() >= timeout_ms as u128 {
@@ -463,8 +491,15 @@ pub const WAIT_FOR_WINDOW: Tool = Tool {
             };
 
             /* Nothing opening in time is a state and not a timeout: the call's own deadline is that. */
-            let summary = if window.is_some() { "window opened".to_owned() } else { format!("nothing opened within {timeout_ms}ms") };
-            Ok(Answer::data(summary, json!({"titlePattern": source, "timeoutMs": timeout_ms, "window": window})))
+            let summary = if window.is_some() {
+                "window opened".to_owned()
+            } else {
+                format!("nothing opened within {timeout_ms}ms")
+            };
+            Ok(Answer::data(
+                summary,
+                json!({"titlePattern": source, "timeoutMs": timeout_ms, "window": window}),
+            ))
         })
     },
 };
@@ -499,7 +534,10 @@ pub const OPEN_CONTAINER: Tool = Tool {
             }
             Err(Failure::refused(
                 "NO_WINDOW_OPENED",
-                format!("the container at {} was clicked but no window opened within 5s", written(at)),
+                format!(
+                    "the container at {} was clicked but no window opened within 5s",
+                    written(at)
+                ),
             ))
         })
     },
@@ -508,11 +546,19 @@ pub const OPEN_CONTAINER: Tool = Tool {
 /// Right-click the block, if it is one of the containers the other kinds of bot also accept. A block
 /// a plugin opens a menu from is activate-block and wait-for-window.
 fn use_container(client: &Client, at: BlockPos) -> Result<(), Failure> {
-    let block = client.world().read().get_block_state(at).map(BlockKind::from).unwrap_or(BlockKind::Air);
+    let block = client
+        .world()
+        .read()
+        .get_block_state(at)
+        .map(BlockKind::from)
+        .unwrap_or(BlockKind::Air);
     let name = plain(block.to_str());
 
     if !CONTAINER_BLOCKS.contains(&name) && !name.ends_with("_shulker_box") {
-        return Err(Failure::refused("NOT_A_CONTAINER", format!("{} holds {name}, not a container", written(at))));
+        return Err(Failure::refused(
+            "NOT_A_CONTAINER",
+            format!("{} holds {name}, not a container", written(at)),
+        ));
     }
 
     client.look_at(at.center());
@@ -536,7 +582,9 @@ pub const CLICK_SLOT: Tool = Tool {
                 let mode = text_or(&args, "mode", "click")?;
                 let window = alive(&bot, |game| require(&game.client))??;
                 if slot >= 0 || mode != "click" || shift {
-                    return Err(Failure::bad_args("a click outside the window is a plain click, and takes no slot, mode or shift"));
+                    return Err(Failure::bad_args(
+                        "a click outside the window is a plain click, and takes no slot, mode or shift",
+                    ));
                 }
                 return click_outside(&bot, &window, button).await;
             }
@@ -574,7 +622,9 @@ impl ClickArgs {
 pub(super) async fn click_step(bot: &Bot, args: &ClickArgs) -> Result<Value, Failure> {
     let slot = args.slot;
     if slot < 0 {
-        return Err(Failure::bad_args("click-slot needs a slot, or outside for a click outside the window"));
+        return Err(Failure::bad_args(
+            "click-slot needs a slot, or outside for a click outside the window",
+        ));
     }
     let window = alive(bot, |game| require(&game.client))??;
 
@@ -585,8 +635,9 @@ pub(super) async fn click_step(bot: &Bot, args: &ClickArgs) -> Result<Value, Fai
     let swap = (click_type == ClickType::Swap).then_some(key);
 
     let before = window.menu.slot(slot as usize).cloned().unwrap_or_default();
-    let swapped_before =
-        swap.map(|index| in_world(bot, |game| inventory_item(&game.client.component::<Inventory>(), index))).transpose()?;
+    let swapped_before = swap
+        .map(|index| in_world(bot, |game| inventory_item(&game.client.component::<Inventory>(), index)))
+        .transpose()?;
 
     let replaced = click(bot, window.id, slot as i16, key, click_type).await?;
 
@@ -612,7 +663,10 @@ pub(super) async fn click_step(bot: &Bot, args: &ClickArgs) -> Result<Value, Fai
         let client = &game.client;
         let (after, cursor) = {
             let inventory = client.component::<Inventory>();
-            (inventory.menu().slot(slot as usize).cloned().unwrap_or_default(), inventory.carried.clone())
+            (
+                inventory.menu().slot(slot as usize).cloned().unwrap_or_default(),
+                inventory.carried.clone(),
+            )
         };
 
         /*
@@ -620,7 +674,11 @@ pub(super) async fn click_step(bot: &Bot, args: &ClickArgs) -> Result<Value, Fai
         what went there is read off the slot instead: a swap that happened left the slot
         holding what the off-hand had, and the off-hand holding what the slot had.
         */
-        if swap == Some(OFF_HAND) && swapped_before.as_ref().is_some_and(|had| *had == after && after != before) {
+        if swap == Some(OFF_HAND)
+            && swapped_before
+                .as_ref()
+                .is_some_and(|had| *had == after && after != before)
+        {
             let _ = client.try_query_self::<&mut Inventory, _>(|mut inventory| {
                 inventory.inventory_menu.as_player_mut().offhand = before.clone();
             });
@@ -685,14 +743,21 @@ pub const OFF_HAND: u8 = 40;
 /// one of them would still send something, and it would be a different input from the one asked for.
 fn input(mode: &str, button: &str, shift: bool, hotbar: i64) -> Result<(ClickType, u8), Failure> {
     if mode != "click" && (shift || button != "left") {
-        return Err(Failure::bad_args(format!("button and shift shape a click, and {mode} takes neither")));
+        return Err(Failure::bad_args(format!(
+            "button and shift shape a click, and {mode} takes neither"
+        )));
     }
     if (mode == "swap-hotbar") != (hotbar != 0) {
-        return Err(Failure::bad_args("hotbar names the key for swap-hotbar, and only swap-hotbar takes one"));
+        return Err(Failure::bad_args(
+            "hotbar names the key for swap-hotbar, and only swap-hotbar takes one",
+        ));
     }
 
     Ok(match mode {
-        "click" => (if shift { ClickType::QuickMove } else { ClickType::Pickup }, u8::from(button == "right")),
+        "click" => (
+            if shift { ClickType::QuickMove } else { ClickType::Pickup },
+            u8::from(button == "right"),
+        ),
         "swap-hotbar" => (ClickType::Swap, (hotbar - 1) as u8),
         "swap-offhand" => (ClickType::Swap, OFF_HAND),
         "throw-one" => (ClickType::Throw, 0),
@@ -718,8 +783,10 @@ pub const DRAG_SLOTS: Tool = Tool {
             let window = alive(&bot, |game| require(&game.client))??;
             let slots = drag_slots(&args, &window.menu)?;
 
-            let before: Vec<ItemStack> =
-                slots.iter().map(|slot| window.menu.slot(*slot).cloned().unwrap_or_default()).collect();
+            let before: Vec<ItemStack> = slots
+                .iter()
+                .map(|slot| window.menu.slot(*slot).cloned().unwrap_or_default())
+                .collect();
             let carried = in_world(&bot, |game| game.client.component::<Inventory>().carried.clone())?;
 
             /*
@@ -738,8 +805,10 @@ pub const DRAG_SLOTS: Tool = Tool {
 
             let (after, cursor) = in_world(&bot, |game| {
                 let inventory = game.client.component::<Inventory>();
-                let after: Vec<ItemStack> =
-                    slots.iter().map(|slot| inventory.menu().slot(*slot).cloned().unwrap_or_default()).collect();
+                let after: Vec<ItemStack> = slots
+                    .iter()
+                    .map(|slot| inventory.menu().slot(*slot).cloned().unwrap_or_default())
+                    .collect();
                 (after, inventory.carried.clone())
             })?;
 
@@ -748,7 +817,11 @@ pub const DRAG_SLOTS: Tool = Tool {
                 .iter()
                 .zip(before.iter().zip(&after))
                 .map(|(slot, (before, after))| {
-                    let after = if replaced.is_some() { Value::Null } else { stacks::held(after) };
+                    let after = if replaced.is_some() {
+                        Value::Null
+                    } else {
+                        stacks::held(after)
+                    };
                     json!({"slot": slot, "before": stacks::held(before), "after": after})
                 })
                 .collect();
@@ -777,7 +850,12 @@ fn drag_slots(args: &Value, menu: &Menu) -> Result<Vec<usize>, Failure> {
     for element in given {
         let slot = element
             .as_i64()
-            .or_else(|| element.as_f64().filter(|number| number.fract() == 0.0).map(|number| number as i64))
+            .or_else(|| {
+                element
+                    .as_f64()
+                    .filter(|number| number.fract() == 0.0)
+                    .map(|number| number as i64)
+            })
             .ok_or_else(|| Failure::bad_args(format!("expected an integer in slots, got {element}")))?;
         if slot < 0 || slot >= menu.len() as i64 {
             return Err(out_of_range(slot, menu));
@@ -821,7 +899,10 @@ pub const DROP_HELD_ITEM: Tool = Tool {
                 let (at, button, click_type) = click_at;
                 click(&bot, window, at, button, click_type).await?;
             }
-            Ok(Answer::data("drop-held-item", json!({"slot": slot, "dropped": stacks::held(&dropped)})))
+            Ok(Answer::data(
+                "drop-held-item",
+                json!({"slot": slot, "dropped": stacks::held(&dropped)}),
+            ))
         })
     },
 };

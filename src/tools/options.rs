@@ -5,6 +5,7 @@
 //! number back, and the number means something different on every menu, so a caller chooses by name
 //! and the number is worked out here from the same numbers the screen draws from.
 
+use azalea::container::ContainerHandleRef;
 use azalea::core::game_type::GameMode;
 use azalea::entity::PlayerAbilities;
 use azalea::inventory::components::{Dye, ProvidesBannerPatterns, WritableBookContent, WrittenBookContent};
@@ -15,7 +16,6 @@ use azalea::protocol::packets::game::s_set_beacon::ServerboundSetBeacon;
 use azalea::registry::builtin::{ItemKind, MobEffect};
 use azalea::registry::{DataRegistry, HolderSet, Registry};
 use azalea::{Client, FormattedText, Identifier};
-use azalea::container::ContainerHandleRef;
 use regex::Regex;
 use serde_json::{Value, json};
 use std::io::Cursor;
@@ -37,8 +37,12 @@ const LECTERN_TAKE: i32 = 3;
 const LECTERN_JUMP: i32 = 100;
 
 /// A beacon's effects by the pyramid level each needs; the last row is the secondary's.
-const BEACON_EFFECTS: &[&[MobEffect]] =
-    &[&[MobEffect::Speed, MobEffect::Haste], &[MobEffect::Resistance, MobEffect::JumpBoost], &[MobEffect::Strength], &[MobEffect::Regeneration]];
+const BEACON_EFFECTS: &[&[MobEffect]] = &[
+    &[MobEffect::Speed, MobEffect::Haste],
+    &[MobEffect::Resistance, MobEffect::JumpBoost],
+    &[MobEffect::Strength],
+    &[MobEffect::Regeneration],
+];
 const SECONDARY_LEVELS: i32 = BEACON_EFFECTS.len() as i32;
 const BEACON_PAYMENT: usize = 0;
 
@@ -55,7 +59,16 @@ struct Choice {
 
 impl Choice {
     fn plain(button: i32, name: &str, available: bool) -> Choice {
-        Choice { button, name: Some(name.to_owned()), label: None, count: None, levels: None, lapis: None, available, selected: false }
+        Choice {
+            button,
+            name: Some(name.to_owned()),
+            label: None,
+            count: None,
+            levels: None,
+            lapis: None,
+            available,
+            selected: false,
+        }
     }
 
     fn json(&self) -> Value {
@@ -99,7 +112,10 @@ fn reading(client: &Client) -> Option<Reading> {
     let known = client.get_component::<Known>()?.clone();
     let (stonecutter, data) = {
         let menus = client.get_component::<Menus>()?;
-        (menus.stonecutter.clone(), (0..10).map(|index| menus.value(window.id, index)).collect())
+        (
+            menus.stonecutter.clone(),
+            (0..10).map(|index| menus.value(window.id, index)).collect(),
+        )
     };
     let mode = client.get_component::<LocalGameMode>().map(|mode| mode.current);
     Some(Reading {
@@ -108,7 +124,9 @@ fn reading(client: &Client) -> Option<Reading> {
         stonecutter,
         data,
         level: client.experience().level as i32,
-        creative: client.get_component::<PlayerAbilities>().is_some_and(|abilities| abilities.instant_break),
+        creative: client
+            .get_component::<PlayerAbilities>()
+            .is_some_and(|abilities| abilities.instant_break),
         may_build: !matches!(mode, Some(GameMode::Adventure | GameMode::Spectator)),
     })
 }
@@ -158,7 +176,9 @@ impl Reading {
                 let clue = self.data[4 + button].unwrap_or(-1);
                 let level = self.data(7 + button);
                 let lapis = button as i32 + 1;
-                let entry = usize::try_from(clue).ok().and_then(|clue| self.known.entry("minecraft:enchantment", clue));
+                let entry = usize::try_from(clue)
+                    .ok()
+                    .and_then(|clue| self.known.entry("minecraft:enchantment", clue));
 
                 Choice {
                     button: button as i32,
@@ -220,10 +240,20 @@ impl Reading {
             return Vec::new();
         }
         let ids: Vec<i32> = if pattern.is_empty() {
-            self.known.tag("minecraft:banner_pattern", &Identifier::new("minecraft:no_item_required")).to_vec()
+            self.known
+                .tag(
+                    "minecraft:banner_pattern",
+                    &Identifier::new("minecraft:no_item_required"),
+                )
+                .to_vec()
         } else {
-            match pattern.get_component::<ProvidesBannerPatterns>().map(|provided| provided.key.clone()) {
-                Some(HolderSet::Direct { contents }) => contents.iter().map(|pattern| pattern.protocol_id() as i32).collect(),
+            match pattern
+                .get_component::<ProvidesBannerPatterns>()
+                .map(|provided| provided.key.clone())
+            {
+                Some(HolderSet::Direct { contents }) => {
+                    contents.iter().map(|pattern| pattern.protocol_id() as i32).collect()
+                }
                 Some(HolderSet::Named { key, .. }) => self.known.tag("minecraft:banner_pattern", &key).to_vec(),
                 None => Vec::new(),
             }
@@ -237,12 +267,20 @@ impl Reading {
         ids.iter()
             .enumerate()
             .map(|(button, id)| {
-                let entry = usize::try_from(*id).ok().and_then(|id| self.known.entry("minecraft:banner_pattern", id));
-                let key = entry.and_then(|(_, data)| data.as_ref()?.string("translation_key").map(|key| key.to_str().into_owned()));
+                let entry = usize::try_from(*id)
+                    .ok()
+                    .and_then(|id| self.known.entry("minecraft:banner_pattern", id));
+                let key = entry.and_then(|(_, data)| {
+                    data.as_ref()?
+                        .string("translation_key")
+                        .map(|key| key.to_str().into_owned())
+                });
                 Choice {
                     button: button as i32,
                     name: entry.map(|(id, _)| id.path().to_owned()),
-                    label: key.zip(color.as_ref()).map(|(key, color)| translated(&format!("{key}.{color}"))),
+                    label: key
+                        .zip(color.as_ref())
+                        .map(|(key, color)| translated(&format!("{key}.{color}"))),
                     count: None,
                     levels: None,
                     lapis: None,
@@ -267,7 +305,11 @@ impl Reading {
     fn describe(&self) -> Value {
         let lectern = matches!(self.window.menu, Menu::Lectern { .. });
         /* A lectern is drawn by the book screen, which has no title of its own. */
-        let title = if lectern { FormattedText::default() } else { self.window.title.clone() };
+        let title = if lectern {
+            FormattedText::default()
+        } else {
+            self.window.title.clone()
+        };
 
         json!({
             "title": title.to_string(),
@@ -333,7 +375,10 @@ fn enchantment_name(data: &NbtCompound, level: i32) -> Option<String> {
     let max_level = data.int("max_level").unwrap_or(1);
 
     if level != 1 || max_level != 1 {
-        Some(format!("{description} {}", translated(&format!("enchantment.level.{level}"))))
+        Some(format!(
+            "{description} {}",
+            translated(&format!("enchantment.level.{level}"))
+        ))
     } else {
         Some(description)
     }
@@ -356,7 +401,8 @@ fn page_count(book: &ItemStack) -> i32 {
     if let Some(written) = book.get_component::<WrittenBookContent>() {
         return written.pages.len() as i32;
     }
-    book.get_component::<WritableBookContent>().map_or(0, |writable| writable.pages.len() as i32)
+    book.get_component::<WritableBookContent>()
+        .map_or(0, |writable| writable.pages.len() as i32)
 }
 
 /// A beacon's effect as its data value holds one: the registry id plus one, and 0 for none.
@@ -407,7 +453,10 @@ pub const PRESS_CONTAINER_BUTTON: Tool = Tool {
 fn press(client: &Client, reading: &Reading, option: Option<&str>, button: i64) -> Result<String, Failure> {
     let kind = kind(&reading.window.menu);
     let send = |button: i32| {
-        client.write_packet(ServerboundContainerButtonClick { container_id: reading.window.id, button_id: button as u32 });
+        client.write_packet(ServerboundContainerButtonClick {
+            container_id: reading.window.id,
+            button_id: button as u32,
+        });
     };
 
     let Some(option) = option else {
@@ -416,12 +465,17 @@ fn press(client: &Client, reading: &Reading, option: Option<&str>, button: i64) 
     };
 
     if matches!(reading.window.menu, Menu::Lectern { .. })
-        && let Some(page) = Regex::new(r"(?i)^page\s+(\d+)$").ok().and_then(|pattern| pattern.captures(option.trim()).map(|found| found[1].to_owned()))
+        && let Some(page) = Regex::new(r"(?i)^page\s+(\d+)$")
+            .ok()
+            .and_then(|pattern| pattern.captures(option.trim()).map(|found| found[1].to_owned()))
     {
         let page: i32 = page.parse().unwrap_or(i32::MAX);
         let pages = page_count(&reading.slot(0));
         if page < 1 || page > pages {
-            return Err(Failure::refused("NO_SUCH_PAGE", format!("the book on this lectern has pages 1-{pages}, and no page {page}")));
+            return Err(Failure::refused(
+                "NO_SUCH_PAGE",
+                format!("the book on this lectern has pages 1-{pages}, and no page {page}"),
+            ));
         }
         if page == reading.data(0) + 1 {
             return Ok(format!("The lectern is already open at page {page}."));
@@ -438,10 +492,17 @@ fn press(client: &Client, reading: &Reading, option: Option<&str>, button: i64) 
         return Ok(format!("{} is already selected on {kind}.", chosen.spoken()));
     }
     if !chosen.available {
-        return Err(Failure::refused("OPTION_UNAVAILABLE", format!("{} cannot be pressed{}.", chosen.spoken(), why(chosen, reading))));
+        return Err(Failure::refused(
+            "OPTION_UNAVAILABLE",
+            format!("{} cannot be pressed{}.", chosen.spoken(), why(chosen, reading)),
+        ));
     }
     send(chosen.button);
-    Ok(format!("Pressed {} (button {}) on {kind}.", chosen.spoken(), chosen.button))
+    Ok(format!(
+        "Pressed {} (button {}) on {kind}.",
+        chosen.spoken(),
+        chosen.button
+    ))
 }
 
 /// Exact before partial, and a partial that matches more than one is refused. "Sharpness" is part
@@ -452,16 +513,31 @@ fn pick<'a>(choices: &'a [Choice], wanted: &str, reading: &Reading, kind: &str) 
     let equal = |text: &Option<String>| text.as_ref().is_some_and(|text| text.to_lowercase() == lowered);
     let contains = |text: &Option<String>| text.as_ref().is_some_and(|text| text.to_lowercase().contains(&lowered));
 
-    if let Some(exact) = choices.iter().find(|choice| equal(&choice.label) || equal(&choice.name)) {
+    if let Some(exact) = choices
+        .iter()
+        .find(|choice| equal(&choice.label) || equal(&choice.name))
+    {
         return Ok(exact);
     }
-    let partial: Vec<&Choice> = choices.iter().filter(|choice| contains(&choice.label) || contains(&choice.name)).collect();
+    let partial: Vec<&Choice> = choices
+        .iter()
+        .filter(|choice| contains(&choice.label) || contains(&choice.name))
+        .collect();
     match partial.as_slice() {
         [only] => Ok(only),
-        [] => Err(Failure::refused("NO_SUCH_OPTION", format!("no option matching \"{wanted}\" on {kind}; {}", offers(choices, reading)))),
+        [] => Err(Failure::refused(
+            "NO_SUCH_OPTION",
+            format!(
+                "no option matching \"{wanted}\" on {kind}; {}",
+                offers(choices, reading)
+            ),
+        )),
         many => Err(Failure::refused(
             "AMBIGUOUS_OPTION",
-            format!("\"{wanted}\" matches {} on {kind}; name one of them", list(many.iter().copied())),
+            format!(
+                "\"{wanted}\" matches {} on {kind}; name one of them",
+                list(many.iter().copied())
+            ),
         )),
     }
 }
@@ -493,7 +569,12 @@ fn why(choice: &Choice, reading: &Reading) -> String {
         );
     }
     if matches!(reading.window.menu, Menu::Lectern { .. }) {
-        return if choice.button == LECTERN_TAKE { ": the bot may not build here" } else { ": the book is already at that end" }.to_owned();
+        return if choice.button == LECTERN_TAKE {
+            ": the bot may not build here"
+        } else {
+            ": the book is already at that end"
+        }
+        .to_owned();
     }
     String::new()
 }
@@ -556,13 +637,23 @@ fn effect(wanted: &str) -> Result<MobEffect, Failure> {
         .find(|effect| plain(effect.to_str()) == needle || effect_label(**effect).eq_ignore_ascii_case(wanted.trim()))
         .copied()
         .ok_or_else(|| {
-            let all: Vec<&str> = BEACON_EFFECTS.iter().flat_map(|row| row.iter()).map(|effect| plain(effect.to_str())).collect();
-            Failure::refused("NO_SUCH_EFFECT", format!("a beacon gives none called \"{wanted}\"; it gives {}", all.join(", ")))
+            let all: Vec<&str> = BEACON_EFFECTS
+                .iter()
+                .flat_map(|row| row.iter())
+                .map(|effect| plain(effect.to_str()))
+                .collect();
+            Failure::refused(
+                "NO_SUCH_EFFECT",
+                format!("a beacon gives none called \"{wanted}\"; it gives {}", all.join(", ")),
+            )
         })
 }
 
 fn levels_for(effect: MobEffect) -> i32 {
-    BEACON_EFFECTS.iter().position(|row| row.contains(&effect)).map_or(i32::MAX, |row| row as i32 + 1)
+    BEACON_EFFECTS
+        .iter()
+        .position(|row| row.contains(&effect))
+        .map_or(i32::MAX, |row| row as i32 + 1)
 }
 
 /// Refuses, with the reason, the pair the confirm button could not have sent.
@@ -570,12 +661,25 @@ fn check(reading: &Reading, primary: MobEffect, secondary: Option<MobEffect>) ->
     let levels = reading.data(0);
     let refused = |message: String| Err(Failure::refused("EFFECT_UNAVAILABLE", message));
     let counted = |levels: i32| format!("{levels} {}", if levels == 1 { "level" } else { "levels" });
-    let pyramid = |levels: i32| if levels == 0 { "has none under it".to_owned() } else { format!("has {}", counted(levels)) };
+    let pyramid = |levels: i32| {
+        if levels == 0 {
+            "has none under it".to_owned()
+        } else {
+            format!("has {}", counted(levels))
+        }
+    };
 
     if levels_for(primary) >= SECONDARY_LEVELS {
-        let primaries: Vec<&str> =
-            BEACON_EFFECTS[..BEACON_EFFECTS.len() - 1].iter().flat_map(|row| row.iter()).map(|effect| plain(effect.to_str())).collect();
-        return refused(format!("{} is only ever a secondary effect; the primary is one of {}", effect_named(primary), primaries.join(", ")));
+        let primaries: Vec<&str> = BEACON_EFFECTS[..BEACON_EFFECTS.len() - 1]
+            .iter()
+            .flat_map(|row| row.iter())
+            .map(|effect| plain(effect.to_str()))
+            .collect();
+        return refused(format!(
+            "{} is only ever a secondary effect; the primary is one of {}",
+            effect_named(primary),
+            primaries.join(", ")
+        ));
     }
     if levels_for(primary) > levels {
         return refused(format!(

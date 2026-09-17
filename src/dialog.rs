@@ -61,7 +61,10 @@ pub struct Button {
 /// What a button's action comes to, once its inputs are read into it.
 pub enum Action {
     Command(String),
-    Custom { id: String, payload: Option<NbtTag> },
+    Custom {
+        id: String,
+        payload: Option<NbtTag>,
+    },
     /// Something the client does on its own screen -- a link, the clipboard, another dialog -- and
     /// sends the server nothing for.
     Local,
@@ -69,14 +72,29 @@ pub enum Action {
 
 impl Open {
     pub fn new(definition: Value) -> Open {
-        let mut open = Open { definition, held: HashMap::new() };
+        let mut open = Open {
+            definition,
+            held: HashMap::new(),
+        };
         for input in open.inputs() {
             let start = match &input.kind {
-                Kind::Text { .. } => Held::Text(open.field(&input.key, "initial").and_then(Value::as_str).unwrap_or_default().to_owned()),
+                Kind::Text { .. } => Held::Text(
+                    open.field(&input.key, "initial")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                ),
                 Kind::Checkbox { .. } => Held::Checkbox(truthy(open.field(&input.key, "initial"))),
                 Kind::Choice { entries } => {
-                    let chosen = open.options(&input.key).find(|(_, initial)| *initial).map(|(entry, _)| entry.id);
-                    Held::Choice(chosen.or_else(|| entries.first().map(|entry| entry.id.clone())).unwrap_or_default())
+                    let chosen = open
+                        .options(&input.key)
+                        .find(|(_, initial)| *initial)
+                        .map(|(entry, _)| entry.id);
+                    Held::Choice(
+                        chosen
+                            .or_else(|| entries.first().map(|entry| entry.id.clone()))
+                            .unwrap_or_default(),
+                    )
                 }
                 Kind::Slider(range) => Held::Slider(range.scaled(range.initial_slider())),
                 Kind::Unknown => continue,
@@ -103,12 +121,17 @@ impl Open {
     }
 
     pub fn closes_on_escape(&self) -> bool {
-        self.definition.get("can_close_with_escape").is_none_or(|value| truthy(Some(value)))
+        self.definition
+            .get("can_close_with_escape")
+            .is_none_or(|value| truthy(Some(value)))
     }
 
     /// What the client does with its screen once a button has run: closes it unless told otherwise.
     pub fn stays_open_after(&self) -> bool {
-        self.definition.get("after_action").and_then(Value::as_str).is_some_and(|after| after.ends_with("none"))
+        self.definition
+            .get("after_action")
+            .and_then(Value::as_str)
+            .is_some_and(|after| after.ends_with("none"))
     }
 
     pub fn inputs(&self) -> Vec<Input> {
@@ -123,10 +146,20 @@ impl Open {
                         multiline: input.get("multiline").is_some(),
                     },
                     "boolean" => Kind::Checkbox {
-                        on_true: input.get("on_true").and_then(Value::as_str).unwrap_or("true").to_owned(),
-                        on_false: input.get("on_false").and_then(Value::as_str).unwrap_or("false").to_owned(),
+                        on_true: input
+                            .get("on_true")
+                            .and_then(Value::as_str)
+                            .unwrap_or("true")
+                            .to_owned(),
+                        on_false: input
+                            .get("on_false")
+                            .and_then(Value::as_str)
+                            .unwrap_or("false")
+                            .to_owned(),
                     },
-                    "single_option" => Kind::Choice { entries: entries(input).map(|(entry, _)| entry).collect() },
+                    "single_option" => Kind::Choice {
+                        entries: entries(input).map(|(entry, _)| entry).collect(),
+                    },
                     "number_range" => Kind::Slider(Range {
                         start: float(input.get("start")).unwrap_or(0.0),
                         end: float(input.get("end")).unwrap_or(0.0),
@@ -187,7 +220,13 @@ impl Open {
     /// What pressing a button sends, read from the inputs as they are held now.
     pub fn action(&self, action: &Value) -> Action {
         match kind(action) {
-            "run_command" => Action::Command(action.get("command").and_then(Value::as_str).unwrap_or_default().to_owned()),
+            "run_command" => Action::Command(
+                action
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned(),
+            ),
             "dynamic/run_command" => {
                 Action::Command(self.substitute(action.get("template").and_then(Value::as_str).unwrap_or_default()))
             }
@@ -223,10 +262,16 @@ impl Open {
     fn substitute(&self, template: &str) -> String {
         let mut command = template.to_owned();
         for input in self.inputs() {
-            let Some(held) = self.held.get(&input.key) else { continue };
+            let Some(held) = self.held.get(&input.key) else {
+                continue;
+            };
             let value = match (held, &input.kind) {
                 (Held::Checkbox(ticked), Kind::Checkbox { on_true, on_false }) => {
-                    if *ticked { on_true.clone() } else { on_false.clone() }
+                    if *ticked {
+                        on_true.clone()
+                    } else {
+                        on_false.clone()
+                    }
                 }
                 (Held::Text(text) | Held::Choice(text), _) => text.clone(),
                 (Held::Slider(number), _) => slider_text(*number),
@@ -259,8 +304,12 @@ impl Range {
         self.to_slider(self.initial.unwrap_or((self.start + self.end) / 2.0))
     }
 
-    pub fn to_slider(&self, value: f32) -> f32 {
-        if self.start == self.end { 0.5 } else { (value - self.start) / (self.end - self.start) }
+    pub fn to_slider(self, value: f32) -> f32 {
+        if self.start == self.end {
+            0.5
+        } else {
+            (value - self.start) / (self.end - self.start)
+        }
     }
 
     /// `RangeInfo.computeScaledValue`: the handle's place as a number, moved onto a step counted
@@ -290,7 +339,11 @@ fn java_round(value: f32) -> i32 {
 /// A slider's number as the client writes it, into a template or a sentence: whole numbers without a
 /// decimal point, the rest as Java's `Float.toString`.
 pub fn slider_text(value: f32) -> String {
-    if value == value.trunc() { format!("{}", value as i32) } else { format!("{value:?}") }
+    if value == value.trunc() {
+        format!("{}", value as i32)
+    } else {
+        format!("{value:?}")
+    }
 }
 
 /// A component as the words it reads, whether the definition wrote it as a string or as JSON.
@@ -298,7 +351,9 @@ pub fn flatten(component: &Value) -> String {
     match component {
         Value::Null => String::new(),
         Value::String(text) => text.clone(),
-        other => serde_json::from_value::<FormattedText>(other.clone()).map(|text| text.to_string()).unwrap_or_default(),
+        other => serde_json::from_value::<FormattedText>(other.clone())
+            .map(|text| text.to_string())
+            .unwrap_or_default(),
     }
 }
 
@@ -309,7 +364,13 @@ fn kind(node: &Value) -> &str {
 
 fn entries(input: &Value) -> impl Iterator<Item = (Entry, bool)> + '_ {
     each(input.get("options")).into_iter().map(|option| match option {
-        Value::String(id) => (Entry { id: id.clone(), display: id.clone() }, false),
+        Value::String(id) => (
+            Entry {
+                id: id.clone(),
+                display: id.clone(),
+            },
+            false,
+        ),
         _ => {
             let id = option.get("id").and_then(Value::as_str).unwrap_or_default().to_owned();
             let display = option.get("display").map(flatten).unwrap_or_else(|| id.clone());

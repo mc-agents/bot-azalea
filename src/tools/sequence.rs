@@ -39,7 +39,10 @@ impl UseArgs {
             "off-hand" => true,
             hand => return Err(Failure::bad_args(format!("unknown hand {hand}"))),
         };
-        Ok(UseArgs { offhand, hold: integer(step, "holdTicks", 1)? as u32 })
+        Ok(UseArgs {
+            offhand,
+            hold: integer(step, "holdTicks", 1)? as u32,
+        })
     }
 
     fn hand(&self) -> &'static str {
@@ -70,7 +73,11 @@ impl Step {
                 };
                 asked + &held(press.hold)
             }
-            Step::UseItem(args) => format!("use item in {}{}", if args.offhand { "off-hand" } else { "main hand" }, held(args.hold)),
+            Step::UseItem(args) => format!(
+                "use item in {}{}",
+                if args.offhand { "off-hand" } else { "main hand" },
+                held(args.hold)
+            ),
             Step::Click(click) if click.mode != "click" => {
                 let mut asked = format!("{} slot {}", click.mode, click.slot);
                 if click.hotbar != 0 {
@@ -111,7 +118,11 @@ impl Step {
 
 /// How long a key or an item was held, worded only when it was longer than a tap.
 fn held(hold: u32) -> String {
-    if hold > 1 { format!(" for {hold} ticks") } else { String::new() }
+    if hold > 1 {
+        format!(" for {hold} ticks")
+    } else {
+        String::new()
+    }
 }
 
 const KINDS: [&str; 6] = ["press", "click", "useItem", "command", "wait", "waitFor"];
@@ -123,8 +134,18 @@ fn parse(step: &Value, index: usize, timeout: u64) -> Result<Step, Failure> {
     let named: Vec<&str> = KINDS.into_iter().filter(|kind| !step[*kind].is_null()).collect();
     let kind = match named[..] {
         [kind] => kind,
-        [] => return Err(Failure::refused("BAD_STEP", format!("step {number} names none of press, click, useItem, command, wait or waitFor"))),
-        [first, second, ..] => return Err(Failure::refused("BAD_STEP", format!("step {number} names both {first} and {second}"))),
+        [] => {
+            return Err(Failure::refused(
+                "BAD_STEP",
+                format!("step {number} names none of press, click, useItem, command, wait or waitFor"),
+            ));
+        }
+        [first, second, ..] => {
+            return Err(Failure::refused(
+                "BAD_STEP",
+                format!("step {number} names both {first} and {second}"),
+            ));
+        }
     };
 
     let parsed = match kind {
@@ -158,19 +179,29 @@ fn parse(step: &Value, index: usize, timeout: u64) -> Result<Step, Failure> {
         "wait" => integer(step, "wait", 1).map(|ticks| Step::Wait(ticks as u32)),
         _ => Watch::parse(&json!({"feed": step["feed"], "pattern": step["waitFor"]})).map(Step::WaitFor),
     };
-    parsed.map_err(|failure| Failure { message: format!("step {number}: {}", failure.message), ..failure })
+    parsed.map_err(|failure| Failure {
+        message: format!("step {number}: {}", failure.message),
+        ..failure
+    })
 }
 
 fn steps(args: &Value, timeout: u64) -> Result<Vec<Step>, Failure> {
     let given = args["steps"].as_array().filter(|steps| !steps.is_empty());
     let given = given.ok_or_else(|| Failure::bad_args("expected a non-empty array of steps"))?;
-    let steps = given.iter().enumerate().map(|(index, step)| parse(step, index, timeout)).collect::<Result<Vec<Step>, Failure>>()?;
+    let steps = given
+        .iter()
+        .enumerate()
+        .map(|(index, step)| parse(step, index, timeout))
+        .collect::<Result<Vec<Step>, Failure>>()?;
 
     let least = steps.iter().map(Step::least_ticks).sum::<u64>() * TICK_MS;
     if least > timeout {
         return Err(Failure::refused(
             "TOO_LONG",
-            format!("the {} steps take at least {least}ms, longer than timeoutMs ({timeout}ms).", steps.len()),
+            format!(
+                "the {} steps take at least {least}ms, longer than timeoutMs ({timeout}ms).",
+                steps.len()
+            ),
         ));
     }
     Ok(steps)
@@ -212,7 +243,13 @@ impl Shown {
                 }
             }
         });
-        Shown { lines, arrived, collector, mark: 0, consumed: 0 }
+        Shown {
+            lines,
+            arrived,
+            collector,
+            mark: 0,
+            consumed: 0,
+        }
     }
 
     /// A step starts: where a waitFor starting now looks from, with this start kept for the next one.
@@ -253,7 +290,14 @@ impl Drop for Shown {
 }
 
 /// One step, made; what comes back goes under the step's kind in its record.
-async fn run(bot: &Bot, step: Step, shown: &mut Shown, from: usize, started_tick: u64, tick0: u64) -> Result<Value, Failure> {
+async fn run(
+    bot: &Bot,
+    step: Step,
+    shown: &mut Shown,
+    from: usize,
+    started_tick: u64,
+    tick0: u64,
+) -> Result<Value, Failure> {
     match step {
         Step::Press(press) => {
             input::game_takes_keys(bot)?;
@@ -340,7 +384,9 @@ pub const RUN_INPUTS: Tool = Tool {
                 let outcome = if left.is_zero() {
                     None
                 } else {
-                    tokio::time::timeout(left, run(&bot, step, &mut shown, from, started_tick, tick0)).await.ok()
+                    tokio::time::timeout(left, run(&bot, step, &mut shown, from, started_tick, tick0))
+                        .await
+                        .ok()
                 };
                 ended_tick = bot.ticks.borrow().saturating_sub(tick0);
 
@@ -405,7 +451,9 @@ mod tests {
     }
 
     fn asked(given: Value) -> String {
-        parse(&step(given), 0, 10_000).unwrap_or_else(|failure| panic!("{}", failure.message)).asked()
+        parse(&step(given), 0, 10_000)
+            .unwrap_or_else(|failure| panic!("{}", failure.message))
+            .asked()
     }
 
     fn refusal(given: Value, index: usize) -> Failure {
@@ -419,20 +467,44 @@ mod tests {
     fn a_step_is_worded_as_it_was_asked() {
         assert_eq!(asked(json!({"press": "jump"})), "press jump");
         assert_eq!(asked(json!({"press": "hotbar", "slot": 0})), "press hotbar 0");
-        assert_eq!(asked(json!({"press": "use", "holdTicks": 40})), "press use for 40 ticks");
+        assert_eq!(
+            asked(json!({"press": "use", "holdTicks": 40})),
+            "press use for 40 ticks"
+        );
         assert_eq!(asked(json!({"useItem": "main-hand"})), "use item in main hand");
         assert_eq!(asked(json!({"useItem": "off-hand"})), "use item in off-hand");
-        assert_eq!(asked(json!({"useItem": "main-hand", "holdTicks": 40})), "use item in main hand for 40 ticks");
-        assert_eq!(asked(json!({"useItem": "off-hand", "holdTicks": 2})), "use item in off-hand for 2 ticks");
+        assert_eq!(
+            asked(json!({"useItem": "main-hand", "holdTicks": 40})),
+            "use item in main hand for 40 ticks"
+        );
+        assert_eq!(
+            asked(json!({"useItem": "off-hand", "holdTicks": 2})),
+            "use item in off-hand for 2 ticks"
+        );
         assert_eq!(asked(json!({"click": 13})), "click slot 13");
-        assert_eq!(asked(json!({"click": 13, "button": "right", "shift": true})), "click slot 13 with the right button with shift");
-        assert_eq!(asked(json!({"click": 13, "mode": "swap-hotbar", "hotbar": 2})), "swap-hotbar slot 13 with hotbar 2");
+        assert_eq!(
+            asked(json!({"click": 13, "button": "right", "shift": true})),
+            "click slot 13 with the right button with shift"
+        );
+        assert_eq!(
+            asked(json!({"click": 13, "mode": "swap-hotbar", "hotbar": 2})),
+            "swap-hotbar slot 13 with hotbar 2"
+        );
         assert_eq!(asked(json!({"click": 5, "mode": "throw-one"})), "throw-one slot 5");
-        assert_eq!(asked(json!({"command": "fixture pling BOT"})), "command /fixture pling BOT");
-        assert_eq!(asked(json!({"command": "/fixture pling BOT"})), "command /fixture pling BOT");
+        assert_eq!(
+            asked(json!({"command": "fixture pling BOT"})),
+            "command /fixture pling BOT"
+        );
+        assert_eq!(
+            asked(json!({"command": "/fixture pling BOT"})),
+            "command /fixture pling BOT"
+        );
         assert_eq!(asked(json!({"wait": 1})), "wait 1 tick");
         assert_eq!(asked(json!({"wait": 20})), "wait 20 ticks");
-        assert_eq!(asked(json!({"waitFor": "Fine day", "feed": "title"})), "wait for /Fine day/ on title");
+        assert_eq!(
+            asked(json!({"waitFor": "Fine day", "feed": "title"})),
+            "wait for /Fine day/ on title"
+        );
     }
 
     /// The slot a press names is the hotbar key's alone, as press-input takes it.
@@ -445,7 +517,11 @@ mod tests {
     /// has its own: a WorldEdit command starts with two, as run-command sends it.
     #[test]
     fn a_command_keeps_the_slashes_it_was_given() {
-        for (given, sent) in [("say hi", "/say hi"), ("/say hi", "/say hi"), ("//set stone", "//set stone")] {
+        for (given, sent) in [
+            ("say hi", "/say hi"),
+            ("/say hi", "/say hi"),
+            ("//set stone", "//set stone"),
+        ] {
             match parse(&step(json!({"command": given})), 0, 10_000) {
                 Ok(Step::Command(command)) => assert_eq!(command, sent),
                 _ => panic!("not a command"),
@@ -457,7 +533,10 @@ mod tests {
     fn a_step_naming_no_kind_or_two_is_refused_by_its_number() {
         let none = refusal(json!({}), 2);
         assert_eq!(none.code, "BAD_STEP");
-        assert_eq!(none.message, "step 3 names none of press, click, useItem, command, wait or waitFor");
+        assert_eq!(
+            none.message,
+            "step 3 names none of press, click, useItem, command, wait or waitFor"
+        );
 
         let both = refusal(json!({"press": "jump", "click": 13}), 2);
         assert_eq!(both.code, "BAD_STEP");
@@ -471,10 +550,17 @@ mod tests {
     /// An item is in use for holdTicks and let go of on the tick after, as a key is.
     #[test]
     fn a_use_takes_its_hold_and_the_tick_it_is_released_on() {
-        let least = |given| parse(&step(given), 0, 10_000).unwrap_or_else(|failure| panic!("{}", failure.message)).least_ticks();
+        let least = |given| {
+            parse(&step(given), 0, 10_000)
+                .unwrap_or_else(|failure| panic!("{}", failure.message))
+                .least_ticks()
+        };
         assert_eq!(least(json!({"useItem": "main-hand"})), 2);
         assert_eq!(least(json!({"useItem": "off-hand", "holdTicks": 40})), 41);
-        assert_eq!(least(json!({"useItem": "off-hand", "holdTicks": 40})), least(json!({"press": "use", "holdTicks": 40})));
+        assert_eq!(
+            least(json!({"useItem": "off-hand", "holdTicks": 40})),
+            least(json!({"press": "use", "holdTicks": 40}))
+        );
     }
 
     #[test]
@@ -488,15 +574,27 @@ mod tests {
     fn a_pattern_that_is_not_one_is_refused_with_its_step() {
         let refused = refusal(json!({"waitFor": "("}), 1);
         assert_eq!(refused.code, "BAD_PATTERN");
-        assert!(refused.message.starts_with("step 2: \"(\" is not a valid regular expression"), "{}", refused.message);
+        assert!(
+            refused
+                .message
+                .starts_with("step 2: \"(\" is not a valid regular expression"),
+            "{}",
+            refused.message
+        );
     }
 
     /// A click shaped wrongly is click-slot's to refuse, when the step is made in the window open
     /// then: the steps before it still run, as they do on the other kind of bot.
     #[test]
     fn a_click_shaped_wrongly_is_a_step_until_it_is_made() {
-        assert_eq!(asked(json!({"click": 13, "mode": "throw-one", "shift": true})), "throw-one slot 13");
-        assert_eq!(asked(json!({"click": 13, "mode": "throw-one", "hotbar": 2})), "throw-one slot 13 with hotbar 2");
+        assert_eq!(
+            asked(json!({"click": 13, "mode": "throw-one", "shift": true})),
+            "throw-one slot 13"
+        );
+        assert_eq!(
+            asked(json!({"click": 13, "mode": "throw-one", "hotbar": 2})),
+            "throw-one slot 13 with hotbar 2"
+        );
     }
 
     #[test]
@@ -504,13 +602,19 @@ mod tests {
         let args = json!({"steps": [step(json!({"press": "use", "holdTicks": 40})), step(json!({"wait": 20})), step(json!({"click": 1}))], "timeoutMs": 3000});
         let refused = steps(&args, 3000).err().expect("refused");
         assert_eq!(refused.code, "TOO_LONG");
-        assert_eq!(refused.message, "the 3 steps take at least 3100ms, longer than timeoutMs (3000ms).");
+        assert_eq!(
+            refused.message,
+            "the 3 steps take at least 3100ms, longer than timeoutMs (3000ms)."
+        );
 
         assert_eq!(steps(&args, 3100).map(|steps| steps.len()).ok(), Some(3));
     }
 
     #[test]
     fn an_empty_sequence_is_refused() {
-        assert_eq!(steps(&json!({"steps": []}), 10_000).err().map(|failure| failure.code), Some("BAD_ARGS".to_owned()));
+        assert_eq!(
+            steps(&json!({"steps": []}), 10_000).err().map(|failure| failure.code),
+            Some("BAD_ARGS".to_owned())
+        );
     }
 }

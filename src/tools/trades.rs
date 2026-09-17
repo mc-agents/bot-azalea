@@ -1,10 +1,10 @@
+use azalea::Client;
 use azalea::inventory::components::{Enchantments, StoredEnchantments};
 use azalea::inventory::item::MaxStackSizeExt;
 use azalea::inventory::{ItemStack, Menu};
 use azalea::protocol::packets::game::c_merchant_offers::{ClientboundMerchantOffers, ItemCost, MerchantOffer};
 use azalea::protocol::packets::game::s_select_trade::ServerboundSelectTrade;
 use azalea::registry::DataRegistry;
-use azalea::Client;
 use serde_json::{Value, json};
 
 use super::args::text;
@@ -24,8 +24,12 @@ const RESULT: usize = 2;
 fn require(client: &Client) -> Result<(Window, Option<ClientboundMerchantOffers>), Failure> {
     let window = menu(client).filter(|window| matches!(window.menu, Menu::Merchant { .. }));
     let Some(window) = window else {
-        let book = client.get_component::<Menus>().is_some_and(|menus| menus.book.is_some());
-        let showing = menu(client).map(|window| screen(&window.menu)).or(book.then_some("BookViewScreen"));
+        let book = client
+            .get_component::<Menus>()
+            .is_some_and(|menus| menus.book.is_some());
+        let showing = menu(client)
+            .map(|window| screen(&window.menu))
+            .or(book.then_some("BookViewScreen"));
         return Err(Failure::refused(
             "NO_TRADES",
             match showing {
@@ -85,8 +89,12 @@ fn describe(offer: &MerchantOffer, number: usize, known: Option<&Known>) -> Valu
 /// A librarian sells a dozen enchanted books that read "enchanted_book x1" alike; which book is the
 /// whole trade. A book stores them apart from what an enchanted tool carries, so both.
 fn enchantments(stack: &ItemStack, known: Option<&Known>) -> Vec<Value> {
-    let stored = stack.get_component::<StoredEnchantments>().map(|stored| stored.enchantments.clone());
-    let carried = stack.get_component::<Enchantments>().map(|carried| carried.levels.clone());
+    let stored = stack
+        .get_component::<StoredEnchantments>()
+        .map(|stored| stored.enchantments.clone());
+    let carried = stack
+        .get_component::<Enchantments>()
+        .map(|carried| carried.levels.clone());
 
     stored
         .into_iter()
@@ -110,7 +118,14 @@ pub const READ_TRADES: Tool = Tool {
                 let known = game.client.get_component::<Known>();
                 let trades: Vec<Value> = offers
                     .as_ref()
-                    .map(|offers| offers.offers.iter().enumerate().map(|(index, offer)| describe(offer, index + 1, known.as_deref())).collect())
+                    .map(|offers| {
+                        offers
+                            .offers
+                            .iter()
+                            .enumerate()
+                            .map(|(index, offer)| describe(offer, index + 1, known.as_deref()))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 /*
@@ -182,7 +197,10 @@ fn pick(offers: &[MerchantOffer], query: &str) -> Result<usize, Failure> {
         if number < 1 || number > offers.len() {
             return Err(Failure::refused(
                 "NO_SUCH_TRADE",
-                format!("there is no trade {number}; this screen lists {}, numbered from 1.", offers.len()),
+                format!(
+                    "there is no trade {number}; this screen lists {}, numbered from 1.",
+                    offers.len()
+                ),
             ));
         }
         return Ok(number - 1);
@@ -203,11 +221,18 @@ fn pick(offers: &[MerchantOffer], query: &str) -> Result<usize, Failure> {
         [only] => Ok(*only),
         [] => Err(Failure::refused(
             "NO_SUCH_TRADE",
-            format!("no trade gives \"{query}\". This screen sells {}.", list(offers, &(0..offers.len()).collect::<Vec<_>>())),
+            format!(
+                "no trade gives \"{query}\". This screen sells {}.",
+                list(offers, &(0..offers.len()).collect::<Vec<_>>())
+            ),
         )),
         many => Err(Failure::refused(
             "AMBIGUOUS_TRADE",
-            format!("{} trades give \"{query}\": {}. Pick one by its number.", many.len(), list(offers, many)),
+            format!(
+                "{} trades give \"{query}\": {}. Pick one by its number.",
+                many.len(),
+                list(offers, many)
+            ),
         )),
     }
 }

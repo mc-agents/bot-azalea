@@ -16,11 +16,17 @@ pub struct Answer {
 
 impl Answer {
     pub fn text(text: impl Into<String>) -> Answer {
-        Answer { text: text.into(), data: None }
+        Answer {
+            text: text.into(),
+            data: None,
+        }
     }
 
     pub fn data(text: impl Into<String>, data: Value) -> Answer {
-        Answer { text: text.into(), data: Some(data) }
+        Answer {
+            text: text.into(),
+            data: Some(data),
+        }
     }
 }
 
@@ -35,11 +41,21 @@ pub struct Failure {
 
 impl Failure {
     pub fn refused(code: &str, message: impl Into<String>) -> Failure {
-        Failure { class: "tool", code: code.into(), message: message.into(), retryable: false }
+        Failure {
+            class: "tool",
+            code: code.into(),
+            message: message.into(),
+            retryable: false,
+        }
     }
 
     pub fn bad_args(message: impl Into<String>) -> Failure {
-        Failure { class: "args", code: "BAD_ARGS".into(), message: message.into(), retryable: false }
+        Failure {
+            class: "args",
+            code: "BAD_ARGS".into(),
+            message: message.into(),
+            retryable: false,
+        }
     }
 
     pub fn not_in_game() -> Failure {
