@@ -15,12 +15,15 @@ use azalea::entity::metadata::{
 };
 use azalea::entity::{Attributes, Dead, EntityKindComponent, EntityUuid, LocalEntity, Position, view_vector};
 use azalea::interact::pick::pick_block;
+use azalea::protocol::packets::game::ClientboundGamePacket;
 use azalea::protocol::packets::game::s_attack::ServerboundAttack;
 use azalea::protocol::packets::game::s_interact::{InteractionHand, ServerboundInteract};
 use azalea::protocol::packets::{Packet, ProtocolPacket};
 use azalea::world::WorldName;
 use azalea::{BlockPos, Client, FormattedText, Vec3};
 use serde_json::{Value, json};
+use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::RecvError;
 
 use super::approach::Approach;
 use super::args::{integer, plain, point};
@@ -36,6 +39,14 @@ const MAX_LISTED: usize = 5;
 /// Ticks between swings. The attack cooldown lands two hits in one tick as one, and this is the gap
 /// the other kinds of bot leave, so a mob takes the same beating from any of them.
 const INTERVAL_TICKS: u32 = 10;
+
+/// Ticks a swing waits for the server to say it landed. A hit comes back within a round trip; a
+/// swing the server never registered -- from the edge of reach, at a stale copy of the entity --
+/// gets nothing at all, and was counted as a hit before this.
+const ACK_TICKS: u32 = 10;
+
+/// Swings in a row the server said nothing about before the call gives up on the target.
+const MISSED_SWINGS: u32 = 3;
 
 /// How far below a label an entity's feet may be. A tall model's label sits well above its base.
 const BELOW: f64 = 3.0;
@@ -58,6 +69,10 @@ struct Seen {
     distance: f32,
     player: bool,
     mob: bool,
+    /// Whether the server answers a hit on it with a hurt animation or a damage event: a living
+    /// entity, except an armor stand. The server answers a survival hit on a stand with an entity
+    /// event only, and breaks it on a second hit inside five ticks, so neither packet ever comes.
+    hurtable: bool,
     pickable: bool,
     display: bool,
     /// What an item display holds up, or what a block display draws; null for every other entity.
@@ -168,6 +183,7 @@ fn nearby(client: &Client) -> Vec<Seen> {
                 distance: (dx * dx + dy * dy + dz * dz).sqrt(),
                 player,
                 mob,
+                hurtable: living && !stand,
                 /* What the game lets a player's crosshair land on. */
                 pickable: interaction
                     || minecart && !dead
@@ -438,6 +454,9 @@ pub const FIND_ENTITY: Tool = Tool {
 /// Swing at an entity, more than once when asked, walking after it before each swing so a mob that
 /// backs off is followed rather than missed.
 ///
+/// A hit is a swing the server acknowledged, not a swing sent: a swing it said nothing about is
+/// made again, and three of those in a row are the failure.
+///
 /// A target that dies partway through is the count that landed and not a failure: something that
 /// went away because it was killed is the tool working.
 pub const ATTACK_ENTITY: Tool = Tool {
@@ -454,22 +473,16 @@ pub const ATTACK_ENTITY: Tool = Tool {
 
             let mut approach = Approach::new();
             let mut landed = 0;
-            let mut waiting = 0;
+            let mut missed = 0;
 
             loop {
-                if waiting > 0 {
-                    waiting -= 1;
-                    tick(&bot).await;
-                    continue;
-                }
-
                 let Some((position, eyes)) = in_world(&bot, |game| whereabouts(&game.client, target.entity))? else {
                     return Ok(Answer::text(format!(
                         "Hit {label} {landed} time(s) out of {times}; it left the world before the rest landed."
                     )));
                 };
 
-                if matches!(selector, Selector::Crosshair) {
+                let look = if matches!(selector, Selector::Crosshair) {
                     /* Not followed: a target picked by where the bot looks is hit only while it is there. */
                     let still = in_world(&bot, |game| crosshair(&game.client))?.is_some_and(|(seen, _)| seen.entity == target.entity);
                     if !still {
@@ -477,25 +490,103 @@ pub const ATTACK_ENTITY: Tool = Tool {
                             "Hit {label} {landed} time(s) out of {times}; it left the crosshair before the rest landed."
                         )));
                     }
-                    alive(&bot, |game| attack(&game.client, target.entity, None))??;
+                    None
                 } else {
                     if !approach.reached(&bot, position, &label)? {
                         tick(&bot).await;
                         continue;
                     }
-                    alive(&bot, |game| attack(&game.client, target.entity, Some(eyes)))??;
-                }
+                    Some(eyes)
+                };
+
+                /* Subscribed before the packet goes out, so the answer to it cannot be missed. */
+                let hurt = bot.hurt.subscribe();
+                let swung = alive(&bot, |game| attack(&game.client, target.entity, look))??;
+                let Some(waited) = acknowledged(&bot, hurt, swung, target.entity, target.hurtable).await? else {
+                    missed += 1;
+                    if missed == MISSED_SWINGS {
+                        return Err(swings_missed(&label, landed));
+                    }
+                    continue;
+                };
                 landed += 1;
+                missed = 0;
 
                 if landed == times {
                     return Ok(Answer::text(format!("Hit {label} {landed} time(s).")));
                 }
-                waiting = INTERVAL_TICKS;
-                tick(&bot).await;
+                /* The gap between swings is the same; the acknowledgement took the first ticks of it. */
+                for _ in waited..=INTERVAL_TICKS {
+                    in_world(&bot, |_| ())?;
+                    tick(&bot).await;
+                }
             }
         })
     },
 };
+
+/// Ticks until the server acknowledged a hit on the entity a swing named, or None once ACK_TICKS
+/// passed with none: the hurt animation or the damage event for that id, or the entity gone from
+/// the world, which is what a killing blow leaves.
+///
+/// That is the rule for a target the server hurts back. An interaction entity or an item frame
+/// has no health and no hurt timer, and an armor stand is answered with an entity event alone: the
+/// server sends neither packet for a swing at one of those unless the swing makes it go away, so
+/// for them the window passing with the entity still there is taken as the hit -- which is what
+/// counting the swing was before there was a window.
+async fn acknowledged(
+    bot: &Bot,
+    mut hurt: broadcast::Receiver<MinecraftEntityId>,
+    id: MinecraftEntityId,
+    entity: Entity,
+    hurtable: bool,
+) -> Result<Option<u32>, Failure> {
+    let mut waited = 0;
+    loop {
+        tokio::select! {
+            hit = hurt.recv() => match hit {
+                Ok(hit) if hit == id => return Ok(Some(waited)),
+                Ok(_) | Err(RecvError::Lagged(_)) => {}
+                Err(RecvError::Closed) => return Err(Failure::not_in_game()),
+            },
+            () = tick(bot) => {
+                waited += 1;
+                if in_world(bot, |game| whereabouts(&game.client, entity))?.is_none() {
+                    return Ok(Some(waited));
+                }
+                if waited == ACK_TICKS {
+                    return Ok((!hurtable).then_some(waited));
+                }
+            }
+        }
+    }
+}
+
+/// Three swings the server said nothing about. What landed before them is named when anything did.
+fn swings_missed(label: &str, landed: i64) -> Failure {
+    let so_far = if landed > 0 {
+        format!("Hit {label} {landed} time(s), then the server registered no hit")
+    } else {
+        format!("the server registered no hit on {label}")
+    };
+    Failure {
+        retryable: true,
+        ..Failure::refused(
+            "SWING_MISSED",
+            format!("{so_far} after {MISSED_SWINGS} swings; it may be out of reach, invulnerable, or already gone"),
+        )
+    }
+}
+
+/// The entities the server says were hurt, handed to a swing waiting to hear that its target was.
+pub(super) fn received(bot: &Bot, packet: &ClientboundGamePacket) {
+    let hurt = match packet {
+        ClientboundGamePacket::HurtAnimation(hurt) => hurt.id,
+        ClientboundGamePacket::DamageEvent(damage) => damage.entity_id,
+        _ => return,
+    };
+    let _ = bot.hurt.send(hurt);
+}
 
 /// Right-click an entity, which is what opens an NPC's dialogue or a villager's trades.
 pub const INTERACT_ENTITY: Tool = Tool {
@@ -528,7 +619,8 @@ pub const INTERACT_ENTITY: Tool = Tool {
 };
 
 /// One attack packet, with the entity id written as the VarInt the game reads, after turning to
-/// where it is given.
+/// where it is given. The id the packet named comes back, which is what the server's acknowledgement
+/// of the hit is matched against.
 ///
 /// azalea's attack packet writes the id as a four-byte int. The server cannot decode that and drops
 /// the connection, so a bot that swung at a mob was thrown out of the world. The packet's id still
@@ -536,7 +628,7 @@ pub const INTERACT_ENTITY: Tool = Tool {
 ///
 /// Upstream: `ServerboundAttack::entity_id` in azalea-protocol 0.16.0 (`s_attack.rs`) lacks the
 /// `#[var]` its `ServerboundInteract` has. Once azalea marks it, `Client::attack` does this.
-pub(super) fn attack(client: &Client, entity: Entity, look: Option<Vec3>) -> Result<(), Failure> {
+pub(super) fn attack(client: &Client, entity: Entity, look: Option<Vec3>) -> Result<MinecraftEntityId, Failure> {
     let target = *client
         .get_entity_component::<MinecraftEntityId>(entity)
         .ok_or_else(|| Failure::refused("NO_SUCH_ENTITY", "the entity left the world before it was hit."))?;
@@ -553,7 +645,7 @@ pub(super) fn attack(client: &Client, entity: Entity, look: Option<Vec3>) -> Res
         .filter(|written| *written)
         .ok_or_else(Failure::not_in_game)?;
     swing(client);
-    Ok(())
+    Ok(target)
 }
 
 /// One interact packet, as the game sends it: at the eyes after turning to them, or where the
@@ -588,7 +680,26 @@ pub(super) fn interact(client: &Client, entity: Entity, aimed: Option<Vec3>) -> 
 mod tests {
     use azalea::Vec3;
 
-    use super::under;
+    use super::{swings_missed, under};
+
+    /// The wording is the other kind of bot's too, and the suite reads it; the hits that landed are
+    /// named only when there were any.
+    #[test]
+    fn three_missed_swings_are_a_retryable_failure_naming_what_landed_before() {
+        let none = swings_missed("chicken", 0);
+        assert_eq!(none.code, "SWING_MISSED");
+        assert!(none.retryable);
+        assert_eq!(
+            none.message,
+            "the server registered no hit on chicken after 3 swings; it may be out of reach, invulnerable, or already gone"
+        );
+
+        let some = swings_missed("chicken", 2);
+        assert_eq!(
+            some.message,
+            "Hit chicken 2 time(s), then the server registered no hit after 3 swings; it may be out of reach, invulnerable, or already gone"
+        );
+    }
 
     /// The offset is the label minus the feet, and getting its sign backwards reads a label as
     /// belonging to whatever stands on top of it rather than to the NPC it floats over.

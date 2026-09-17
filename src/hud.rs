@@ -108,6 +108,9 @@ fn kept(packet: &ClientboundGamePacket) -> bool {
             | P::OpenScreen(_)
             | P::ContainerSetContent(_)
             | P::SetCursorItem(_)
+            /* Nor these: a hit the server registered, which a swing waits to hear of. */
+            | P::HurtAnimation(_)
+            | P::DamageEvent(_)
     )
 }
 

@@ -3,6 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use azalea::FormattedText;
+use azalea::core::entity_id::MinecraftEntityId;
 use serde_json::{Map, Value, json};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
@@ -55,6 +56,10 @@ pub struct Bot {
     pub opens: Cell<u64>,
     /// The window the server last closed.
     pub closed: watch::Sender<Option<i32>>,
+    /// The entities the server said were hurt, by network id, for a swing waiting to hear that its
+    /// target was. Every one is kept rather than the last, because the pump hands over a frame's
+    /// packets before the swing gets to look, and another entity's hurt can come behind the target's.
+    pub hurt: broadcast::Sender<MinecraftEntityId>,
     /// What the last status said that a move can change, and the tick it went out on.
     pub reported: RefCell<Option<(String, u64)>>,
 }
@@ -80,6 +85,7 @@ impl Bot {
             opened: RefCell::new(None),
             opens: Cell::new(0),
             closed: watch::channel(None).0,
+            hurt: broadcast::channel(64).0,
             reported: RefCell::new(None),
         }
     }

@@ -30,6 +30,8 @@ use std::pin::Pin;
 use std::rc::Rc;
 use std::time::Duration;
 
+use azalea::Client;
+use azalea::protocol::packets::game::ClientboundGamePacket;
 use serde_json::{Value, json};
 
 use crate::bot::Bot;
@@ -38,7 +40,12 @@ use crate::catalog;
 use crate::game::Game;
 
 pub use player::game_mode;
-pub use windows::received;
+
+/// A packet the ECS handed over, for the tools that watch for one.
+pub fn received(bot: &Bot, client: &Client, packet: &ClientboundGamePacket) {
+    windows::received(bot, client, packet);
+    entities::received(bot, packet);
+}
 
 pub type Run = fn(Rc<Bot>, Value) -> Pin<Box<dyn Future<Output = Outcome>>>;
 
