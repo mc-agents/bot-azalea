@@ -188,13 +188,17 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.REGISTRY_USERNAME }}
           password: ${{ secrets.REGISTRY_PASSWORD }}
+      # The build cache lives in GitHub's cache, not in the registry. The registry sits behind
+      # Cloudflare, which cuts an upload at 100MB, and the compiled-dependencies layer of a Rust
+      # build is past that: the arm64 job died twice on the same blob, mid-PUT, once the layer
+      # changed and had to be sent whole. A cache miss here costs a full compile, not a release.
       - uses: docker/build-push-action@v6
         with:
           context: .
           push: true
           tags: ${{ env.IMAGE }}:${{ needs.check.outputs.version }}-${{ github.sha }}-${{ matrix.arch }}
-          cache-from: type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.arch }}
-          cache-to: type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.arch }},mode=max,image-manifest=true,oci-mediatypes=true
+          cache-from: type=gha,scope=image-${{ matrix.arch }}
+          cache-to: type=gha,scope=image-${{ matrix.arch }},mode=max
 
   publish:
     needs: [check, smoke, image]
