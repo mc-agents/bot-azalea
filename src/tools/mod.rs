@@ -109,6 +109,7 @@ const TOOLS: &[Tool] = &[
     dialogs::SET_DIALOG_INPUT,
     editors::TYPE_TEXT,
     editors::READ_BLOCK_ENTITY,
+    blocks::READ_REGION,
 ];
 
 pub fn find(name: &str) -> Option<&'static Tool> {

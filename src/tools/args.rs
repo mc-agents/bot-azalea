@@ -15,6 +15,23 @@ pub fn position(args: &Value) -> Result<BlockPos, Failure> {
     Ok(BlockPos::new(axis("x")?, axis("y")?, axis("z")?))
 }
 
+/// A block position from a nested `{x, y, z}`, which is how a tool that takes a pair of corners
+/// words each of them.
+///
+/// A fraction is cut towards zero rather than floored, so -12.5 is -12, because that is what gson
+/// does for the other kind of bot. mcp-server refuses a fractional corner before either of them
+/// sees it, so this settles nothing about a call through the server: it is about the two bots
+/// answering a direct call -- which is how the end-to-end suite drives them -- with the same box.
+pub fn corner(args: &Value, name: &str) -> Result<BlockPos, Failure> {
+    let axis = |axis: &str| {
+        args[name][axis]
+            .as_f64()
+            .map(|value| value as i32)
+            .ok_or_else(|| Failure::bad_args(format!("expected a number for {name}.{axis}")))
+    };
+    Ok(BlockPos::new(axis("x")?, axis("y")?, axis("z")?))
+}
+
 pub fn text<'a>(args: &'a Value, name: &str) -> Result<&'a str, Failure> {
     args[name]
         .as_str()

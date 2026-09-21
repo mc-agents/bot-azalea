@@ -14,6 +14,7 @@ use azalea::{BlockPos, Client, Vec3};
 
 use super::approach::Approach;
 use super::args::{plain, position, text, written};
+use super::blocks::is_air;
 use super::stacks;
 use super::{Tool, alive, tick};
 use crate::bot::Bot;
@@ -46,11 +47,9 @@ pub const DIG_BLOCK: Tool = Tool {
             let at = position(&args)?;
 
             /* Nothing to dig is a state, not a refusal: asking twice should not fail the second time. */
-            let state = alive(&bot, |game| block_at(game, at))?;
-            if state.is_air() {
+            let Some(block) = alive(&bot, |game| filled(block_at(game, at)))? else {
                 return Ok(Answer::text(format!("Nothing to dig at {}.", written(at))));
-            }
-            let block = name(state);
+            };
 
             approach(&bot, at).await?;
 
@@ -62,7 +61,9 @@ pub const DIG_BLOCK: Tool = Tool {
             let digging = Digging(alive(&bot, |game| game.client.clone())?);
             let mut ticks = 0;
             loop {
-                let (gone, mining) = alive(&bot, |game| (block_at(game, at).is_air(), game.client.is_mining()))?;
+                let (gone, mining) = alive(&bot, |game| {
+                    (filled(block_at(game, at)).is_none(), game.client.is_mining())
+                })?;
                 if gone {
                     return Ok(Answer::text(format!("Dug {block} at {}.", written(at))));
                 }
@@ -124,13 +125,10 @@ pub const PLACE_BLOCK: Tool = Tool {
                         "Cannot place a block inside the bot itself",
                     ));
                 }
-                let state = block_at(game, at);
-                if !state.is_air() {
-                    return Ok(Err(format!("{} already holds {}.", written(at), name(state))));
+                if let Some(block) = filled(block_at(game, at)) {
+                    return Ok(Err(format!("{} already holds {}.", written(at), block)));
                 }
-                std::iter::once(preferred)
-                    .chain(FACES.into_iter().filter(|face| *face != preferred))
-                    .find(|face| !block_at(game, at.offset_with_direction(*face)).is_air())
+                against(preferred, |face| block_at(game, at.offset_with_direction(face)))
                     .map(Ok)
                     .ok_or_else(|| {
                         Failure::refused(
@@ -311,6 +309,26 @@ fn block_at(game: &Game, at: BlockPos) -> BlockState {
     game.client.world().read().get_block_state(at).unwrap_or_default()
 }
 
+/// What a hand has to work on at a position: the block's name, or nothing where the space is empty.
+///
+/// Empty is the game's whole air set, not `BlockState::is_air`, which is the plain kind alone. A
+/// cave is cave_air throughout, so a hand asking that would swing out the dig's whole patience at
+/// nothing underground, and refuse to place there as though the space were taken -- while the other
+/// kind of bot, on vanilla's isAir, does neither. The name comes back with the reading so a hand
+/// has one notion of empty rather than one for each place it asks.
+fn filled(state: BlockState) -> Option<&'static str> {
+    (!is_air(state)).then(|| name(state))
+}
+
+/// The neighbour to place against: the caller's face when a block is there to take a click, else
+/// the first of the rest that has one. Nothing means the space is surrounded by air, which no
+/// server will accept a placement into.
+fn against(preferred: Direction, neighbour: impl Fn(Direction) -> BlockState) -> Option<Direction> {
+    std::iter::once(preferred)
+        .chain(FACES.into_iter().filter(|face| *face != preferred))
+        .find(|face| filled(neighbour(*face)).is_some())
+}
+
 /// A block's name without its namespace, the way the other kind of bot writes it in a sentence.
 fn name(state: BlockState) -> &'static str {
     plain(BlockKind::from(state).to_str())
@@ -350,5 +368,55 @@ fn face_name(face: Direction) -> &'static str {
         Direction::South => "south",
         Direction::West => "west",
         Direction::East => "east",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use azalea::block::BlockState;
+    use azalea::core::direction::Direction;
+    use azalea::registry::builtin::BlockKind;
+
+    use super::{against, filled};
+
+    /// A hand's notion of empty is the game's, which is three blocks and not one. A cave is
+    /// cave_air throughout and the End's emptiness is void_air, so a hand that read only the plain
+    /// kind would find a block to break where the other kind of bot, on vanilla's isAir, finds
+    /// nothing, and would swing at it until the dig gave up on it.
+    #[test]
+    fn a_space_holds_nothing_whichever_of_the_three_airs_it_is() {
+        assert_eq!(filled(state(BlockKind::Stone)), Some("stone"));
+        assert_eq!(filled(state(BlockKind::Air)), None);
+        assert_eq!(filled(state(BlockKind::CaveAir)), None);
+        assert_eq!(filled(state(BlockKind::VoidAir)), None);
+    }
+
+    /// A block is placed by clicking a neighbour, so a neighbour has to be there to click. In a
+    /// cave all six are cave_air and there is nothing: saying so is what the server would answer
+    /// anyway, where placing against cave air is a click that goes nowhere.
+    #[test]
+    fn cave_air_is_nothing_to_place_against() {
+        assert_eq!(against(Direction::North, |_| state(BlockKind::CaveAir)), None);
+        assert_eq!(
+            against(Direction::North, |face| match face {
+                Direction::Down => state(BlockKind::Stone),
+                _ => state(BlockKind::CaveAir),
+            }),
+            Some(Direction::Down)
+        );
+    }
+
+    /// The caller's face is which neighbour to try first. Falling through to the fixed order when
+    /// the asked-for one is a block puts the new block on a different side of it.
+    #[test]
+    fn the_face_the_caller_asked_for_is_taken_when_a_block_is_on_it() {
+        assert_eq!(
+            against(Direction::North, |_| state(BlockKind::Stone)),
+            Some(Direction::North)
+        );
+    }
+
+    fn state(kind: BlockKind) -> BlockState {
+        BlockState::from(kind)
     }
 }
