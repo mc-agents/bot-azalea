@@ -312,7 +312,7 @@ mod tests {
     use std::collections::HashMap;
 
     use azalea::BlockPos;
-    use azalea::block::{BlockState, BlockTrait};
+    use azalea::block::BlockState;
     use azalea::registry::builtin::BlockKind;
     use serde_json::{Value, json};
 
@@ -368,7 +368,7 @@ mod tests {
             facing: azalea::block::properties::FacingCardinal::East,
             half: azalea::block::properties::TopBottom::Top,
             shape: azalea::block::properties::StairShape::Straight,
-            waterlogged: azalea::block::properties::Waterlogged(false),
+            waterlogged: false,
         });
         let held: HashMap<BlockPos, BlockState> = HashMap::from([
             (BlockPos::new(0, 0, 0), stairs),
