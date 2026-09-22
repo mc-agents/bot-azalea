@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::ops::Range;
 use std::str::FromStr;
 
 use azalea::BlockPos;
-use azalea::block::BlockState;
+use azalea::block::{BlockState, BlockTrait};
 use azalea::registry::Registry;
 use azalea::registry::builtin::BlockKind;
 use azalea::registry::tags;
@@ -11,6 +12,24 @@ use serde_json::{Value, json};
 use super::args::{boolean, corner, plain, point, position, text, written};
 use super::{Tool, in_world};
 use crate::calls::{Answer, Failure};
+
+/// The whole state, as /setblock and //set take one: `oak_stairs[facing=north,half=bottom,...]`,
+/// the properties in name order, which is the order the game itself writes them in. The kind alone
+/// lost every orientation, and on a server whose custom blocks are note blocks in disguise it lost
+/// which custom block a note block stood for. Without the minecraft namespace, as every tool here
+/// names a block; there is no other namespace to keep, since BlockKind is the vanilla registry.
+fn state_name(state: BlockState) -> String {
+    let block = Box::<dyn BlockTrait>::from(state);
+    let mut properties: Vec<(&str, &str)> = block.property_map().into_iter().collect();
+    properties.sort_unstable();
+
+    let kind = plain(BlockKind::from(state).to_str()).to_string();
+    if properties.is_empty() {
+        return kind;
+    }
+    let listed: Vec<String> = properties.iter().map(|(name, value)| format!("{name}={value}")).collect();
+    format!("{kind}[{}]", listed.join(","))
+}
 
 /// Whether the game counts a block as air.
 ///
@@ -193,12 +212,14 @@ struct Run {
 /// it opened or starting another.
 #[derive(Default)]
 struct Region {
-    palette: Vec<&'static str>,
+    palette: Vec<String>,
     runs: Vec<Run>,
     missing: u64,
     outside: u64,
+    /// Where each state seen so far sits in the palette, so a block is named once and not once a position.
+    seen: HashMap<BlockState, usize>,
     /// What the open run is made of, or nothing when the position before this one closed it.
-    open: Option<&'static str>,
+    open: Option<BlockState>,
 }
 
 impl Region {
@@ -236,7 +257,7 @@ impl Region {
                         other kind of bot would name create:cogwheel arrives here as whatever
                         vanilla block the server sent in its place.
                         */
-                        Some(state) => region.push(plain(BlockKind::from(state).to_str())),
+                        Some(state) => region.push(state),
                     }
                 }
             }
@@ -244,16 +265,20 @@ impl Region {
         region
     }
 
-    fn push(&mut self, block: &'static str) {
+    fn push(&mut self, state: BlockState) {
         match self.runs.last_mut() {
-            Some(run) if self.open == Some(block) => run.count += 1,
+            Some(run) if self.open == Some(state) => run.count += 1,
             _ => {
-                let index = self.palette.iter().position(|name| *name == block).unwrap_or_else(|| {
-                    self.palette.push(block);
-                    self.palette.len() - 1
-                });
+                let index = match self.seen.get(&state) {
+                    Some(index) => *index,
+                    None => {
+                        self.palette.push(state_name(state));
+                        self.seen.insert(state, self.palette.len() - 1);
+                        self.palette.len() - 1
+                    }
+                };
                 self.runs.push(Run { block: index, count: 1 });
-                self.open = Some(block);
+                self.open = Some(state);
             }
         }
     }
@@ -284,7 +309,7 @@ mod tests {
     use std::collections::HashMap;
 
     use azalea::BlockPos;
-    use azalea::block::BlockState;
+    use azalea::block::{BlockState, BlockTrait};
     use azalea::registry::builtin::BlockKind;
     use serde_json::{Value, json};
 
@@ -329,6 +354,34 @@ mod tests {
 
         assert_eq!(region.palette, ["stone", "dirt"]);
         assert_eq!(runs(&region), [(0, 1), (1, 2), (0, 1)]);
+    }
+
+    /// A palette entry is the whole state, spelled the way /setblock takes one and the way the
+    /// game writes one -- the properties in name order -- so the other kind of bot spells the same
+    /// stairs the same way, and a block with no properties is its bare kind.
+    #[test]
+    fn the_palette_spells_a_block_state_out_in_property_order() {
+        let stairs = BlockState::from(azalea::block::blocks::OakStairs {
+            facing: azalea::block::properties::FacingCardinal::East,
+            half: azalea::block::properties::TopBottom::Top,
+            shape: azalea::block::properties::StairShape::Straight,
+            waterlogged: azalea::block::properties::Waterlogged(false),
+        });
+        let held: HashMap<BlockPos, BlockState> = HashMap::from([
+            (BlockPos::new(0, 0, 0), stairs),
+            (BlockPos::new(1, 0, 0), BlockState::from(BlockKind::Stone)),
+        ]);
+        let region = Region::read(
+            &Bounds::between(BlockPos::new(0, 0, 0), BlockPos::new(1, 0, 0)),
+            &(-64..320),
+            true,
+            move |at| held.get(&at).copied(),
+        );
+
+        assert_eq!(
+            region.palette,
+            ["oak_stairs[facing=east,half=top,shape=straight,waterlogged=false]", "stone"]
+        );
     }
 
     /// Nothing else says where a run sits, so the walk is the answer's spine, and the other kind of
