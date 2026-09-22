@@ -12,6 +12,7 @@ mod link;
 mod menus;
 mod text;
 mod tools;
+mod worldedit;
 
 use std::rc::Rc;
 

@@ -24,6 +24,7 @@ mod wait;
 mod walk;
 mod windows;
 mod world;
+mod worldedit;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -110,6 +111,7 @@ const TOOLS: &[Tool] = &[
     editors::TYPE_TEXT,
     editors::READ_BLOCK_ENTITY,
     blocks::READ_REGION,
+    worldedit::READ_SELECTION,
 ];
 
 pub fn find(name: &str) -> Option<&'static Tool> {

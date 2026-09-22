@@ -37,6 +37,7 @@ use crate::bot::Bot;
 use crate::dialog::Open;
 use crate::editors::{BlockEntities, CommandEditor, SignEditor, Tracked, sign_face};
 use crate::feeds;
+use crate::worldedit::{self, Selection};
 
 /// Where the packets the bot keeps go, one per connection.
 #[derive(Component)]
@@ -69,6 +70,15 @@ fn forward(mut received: MessageReader<ReceiveGamePacketEvent>, listeners: Query
 
 fn kept(packet: &ClientboundGamePacket) -> bool {
     use ClientboundGamePacket as P;
+
+    /*
+    The one packet kept for what is in it rather than for which it is. Every plugin on a server
+    shares the custom payload packet -- the server's brand, a shop's currency, a proxy's own
+    bookkeeping -- and only WorldEdit's selection is read here.
+    */
+    if let P::CustomPayload(payload) = packet {
+        return worldedit::is_cui(&payload.identifier);
+    }
     matches!(
         packet,
         P::SetActionBarText(_)
@@ -223,6 +233,9 @@ pub struct Hud {
     /// The server takes only signed chat, which it says at login. This bot never has a key to sign
     /// with, so plain chat to such a server is dropped.
     pub signed_chat_only: bool,
+    /// What WorldEdit last said about the selection, which is nothing at all until this client has
+    /// announced that it draws one.
+    pub selection: Selection,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -476,7 +489,11 @@ pub fn apply(bot: &Bot, packet: &ClientboundGamePacket) {
             announces with no event: its spawn event is sent once per connection. */
             match packet {
                 P::StartConfiguration(_) => game.reconfiguring(),
-                P::Login(_) if hud.logins > 1 => game.arrived(),
+                P::Login(_) if hud.logins > 1 => {
+                    game.arrived();
+                    /* A backend switch is a login on the same socket, and the next server has never been told. */
+                    worldedit::announce(&game.client);
+                }
                 _ => {}
             }
         }
@@ -690,6 +707,7 @@ fn keep(hud: &mut Hud, packet: &ClientboundGamePacket, ticks: u64) {
             }
         }
         P::Commands(p) => hud.commands = Some(p.clone()),
+        P::CustomPayload(p) => hud.selection.accept(&String::from_utf8_lossy(&p.data)),
         P::CommandSuggestions(p) => {
             if let Some(answer) = hud.completions.remove(&p.id) {
                 let _ = answer.send(p.suggestions.clone());

@@ -29,6 +29,7 @@ use crate::calls::{self, Answer, Failure, Outcome};
 use crate::feeds;
 use crate::hud::{self, Hud, HudPackets, HudPlugin};
 use crate::menus::{Known, Menus, MenusPlugin};
+use crate::worldedit;
 
 /// The world the bot is in, while it is in one.
 pub struct Game {
@@ -363,6 +364,12 @@ async fn pump(
             Event::Spawn => {
                 if let Some(game) = bot.game.borrow().as_ref().filter(|game| game.generation == generation) {
                     game.spawned.set(true);
+                    /*
+                    Announcing here and not only when read-selection asks: WorldEdit remembers that
+                    this client draws selections and pushes every later change to one, so a corner
+                    the bot set has usually arrived before anything asks about it.
+                    */
+                    worldedit::announce(&game.client);
                 }
                 if let Some(joined) = joined.take() {
                     let _ = joined.send(Ok(()));
