@@ -33,11 +33,16 @@ pub const READ_SELECTION: Tool = Tool {
             tokio::pin!(deadline);
 
             /*
-            One description is several messages -- the shape, then a corner each -- and they are not
-            promised to land in one tick. So the answer waits for a tick that adds nothing to the
-            one before it, and what it reads then is a whole description.
+            One description is several messages -- the shape, then a corner each -- and the server
+            sends them together, so the tick that carries the first carries the rest. The corners
+            are the proof of that: having one is having a whole description, and the answer goes
+            back on the tick it arrives.
+
+            A description with no corner in it is the ambiguous one, since it reads the same whether
+            nothing is selected or the corners are a tick behind. That one waits a further tick, and
+            the wait costs nothing where it happens -- no box is put down over an empty selection.
             */
-            let mut quiet = asked;
+            let mut waited_again = false;
             let supported = loop {
                 tokio::select! {
                     changed = ticks.changed() => if changed.is_err() {
@@ -46,13 +51,16 @@ pub const READ_SELECTION: Tool = Tool {
                     _ = &mut deadline => break false,
                 }
 
-                let described = in_world(&bot, |game| game.hud.borrow().selection.described())?;
+                let (described, corners) = in_world(&bot, |game| {
+                    let hud = game.hud.borrow();
+                    (hud.selection.described(), hud.selection.corners().count())
+                })?;
 
                 if described > asked {
-                    if described == quiet {
+                    if corners > 0 || waited_again {
                         break true;
                     }
-                    quiet = described;
+                    waited_again = true;
                 }
             };
 
