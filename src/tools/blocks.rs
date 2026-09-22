@@ -27,7 +27,10 @@ fn state_name(state: BlockState) -> String {
     if properties.is_empty() {
         return kind;
     }
-    let listed: Vec<String> = properties.iter().map(|(name, value)| format!("{name}={value}")).collect();
+    let listed: Vec<String> = properties
+        .iter()
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect();
     format!("{kind}[{}]", listed.join(","))
 }
 
@@ -380,7 +383,10 @@ mod tests {
 
         assert_eq!(
             region.palette,
-            ["oak_stairs[facing=east,half=top,shape=straight,waterlogged=false]", "stone"]
+            [
+                "oak_stairs[facing=east,half=top,shape=straight,waterlogged=false]",
+                "stone"
+            ]
         );
     }
 
