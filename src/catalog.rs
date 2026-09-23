@@ -2,7 +2,7 @@
 
 pub const CATALOG_VERSION: &str = "5.6.0";
 /// The mcp-server release the catalogue was read from. CI regenerates from it and expects no diff.
-pub const CATALOG_SOURCE: &str = "../mcp-server/catalog/catalog.json";
+pub const CATALOG_SOURCE: &str = "v0.68.0";
 pub const PROTOCOL: u32 = 1;
 
 /// The argument hash the catalogue gives each tool a bot could answer, sorted by name.
