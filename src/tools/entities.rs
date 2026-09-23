@@ -26,7 +26,7 @@ use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 
 use super::approach::Approach;
-use super::args::{integer, plain, point};
+use super::args::{corner, integer, plain, point};
 use super::text::{component, one_decimal};
 use super::windows::swing;
 use super::{Tool, alive, in_world, stacks, tick};
@@ -507,6 +507,43 @@ fn whereabouts(client: &Client, entity: Entity) -> Option<(Vec3, Vec3)> {
     Some((position, position.up(f64::from(eyes))))
 }
 
+/// The box to search, or nothing for a radius.
+///
+/// Both corners are block coordinates and both ends count, which is how every other tool that takes
+/// a box reads one, so the far corner is grown by a block: a box from (0,0,0) to (0,0,0) is the one
+/// block at the origin and holds whatever stands in it.
+fn searched(args: &Value) -> Result<Option<(Vec3, Vec3)>, Failure> {
+    if args["from"].is_null() || args["to"].is_null() {
+        return Ok(None);
+    }
+    let one = corner(args, "from")?;
+    let other = corner(args, "to")?;
+
+    Ok(Some((
+        Vec3::new(
+            f64::from(one.x.min(other.x)),
+            f64::from(one.y.min(other.y)),
+            f64::from(one.z.min(other.z)),
+        ),
+        Vec3::new(
+            f64::from(one.x.max(other.x)) + 1.0,
+            f64::from(one.y.max(other.y)) + 1.0,
+            f64::from(one.z.max(other.z)) + 1.0,
+        ),
+    )))
+}
+
+fn inside(box_: (Vec3, Vec3), at: Vec3) -> bool {
+    let (low, high) = box_;
+    at.x >= low.x && at.x <= high.x && at.y >= low.y && at.y <= high.y && at.z >= low.z && at.z <= high.z
+}
+
+/// What is nearby, nearest first, for deciding whether a mob spawned or an NPC is where it should be.
+///
+/// A box may be given instead of a radius. A room is a box: sweeping one with a radius either misses
+/// the far corners or drags in the street outside, and a room's furniture is exactly the thing worth
+/// listing whole. The answer still comes nearest first, since that is the order that says which of
+/// two identical chairs is the one in front of the bot.
 pub const FIND_ENTITY: Tool = Tool {
     name: "find-entity",
     run: |bot, args| {
@@ -514,6 +551,7 @@ pub const FIND_ENTITY: Tool = Tool {
             let query = args["type"].as_str().map(str::to_owned);
             let max_distance = max_distance(&args, 16.0);
             let count = integer(&args, "count", 1)?.max(0) as usize;
+            let box_ = searched(&args)?;
 
             let entities = in_world(&bot, |game| {
                 /* From everything loaded: a label out of range can still be over an entity that is in it. */
@@ -522,16 +560,22 @@ pub const FIND_ENTITY: Tool = Tool {
 
                 seen.iter()
                     .enumerate()
-                    .filter(|(_, seen)| f64::from(seen.distance) <= max_distance)
+                    .filter(|(_, seen)| match box_ {
+                        Some(box_) => inside(box_, seen.position),
+                        None => f64::from(seen.distance) <= max_distance,
+                    })
                     .filter(|(_, seen)| query.as_deref().is_none_or(|query| seen.matches(query)))
                     .take(count)
                     .map(|(index, one)| one.describe(labels.get(&index).map(|label| &seen[*label])))
                     .collect::<Vec<_>>()
             })?;
 
+            /* No distance to report is how the server is told a box was searched rather than a radius. */
+            let reported = if box_.is_some() { 0.0 } else { max_distance };
+
             Ok(Answer::data(
                 "find-entity",
-                json!({"query": args["type"], "maxDistance": max_distance, "entities": entities}),
+                json!({"query": args["type"], "maxDistance": reported, "entities": entities}),
             ))
         })
     },
