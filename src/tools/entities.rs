@@ -585,7 +585,8 @@ pub const FIND_ENTITY: Tool = Tool {
 /// backs off is followed rather than missed.
 ///
 /// A hit is a swing the server acknowledged, not a swing sent: a swing it said nothing about is
-/// made again, and three of those in a row are the failure.
+/// made again, and three of those in a row are the failure. A target that takes no damage is never
+/// acknowledged either way, so what it gets is a swing rather than a hit, and the answer says so.
 ///
 /// A target that dies partway through is the count that landed and not a failure: something that
 /// went away because it was killed is the tool working.
@@ -618,7 +619,8 @@ pub const ATTACK_ENTITY: Tool = Tool {
                         .is_some_and(|(seen, _)| seen.entity == target.entity);
                     if !still {
                         return Ok(Answer::text(format!(
-                            "Hit {label} {landed} time(s) out of {times}; it left the crosshair before the rest landed."
+                            "{} out of {times}; it left the crosshair before the rest landed.",
+                            struck(&label, landed, target.hurtable)
                         )));
                     }
                     None
@@ -636,7 +638,7 @@ pub const ATTACK_ENTITY: Tool = Tool {
                 let Some(waited) = acknowledged(&bot, hurt, swung, target.entity, target.hurtable).await? else {
                     missed += 1;
                     if missed == MISSED_SWINGS {
-                        return Err(swings_missed(&label, landed));
+                        return Err(swings_missed(&label, landed, target.hurtable));
                     }
                     continue;
                 };
@@ -644,7 +646,7 @@ pub const ATTACK_ENTITY: Tool = Tool {
                 missed = 0;
 
                 if landed == times {
-                    return Ok(Answer::text(format!("Hit {label} {landed} time(s).")));
+                    return Ok(Answer::text(format!("{}.", struck(&label, landed, target.hurtable))));
                 }
                 /* The gap between swings is the same; the acknowledgement took the first ticks of it. */
                 for _ in waited..=INTERVAL_TICKS {
@@ -693,10 +695,28 @@ async fn acknowledged(
     }
 }
 
+/// What was done, said so that it cannot be read as more than it is.
+///
+/// A hit is only a hit when the server said so, and the server says nothing about a swing at
+/// something that takes no damage: an interaction box, an item frame, an armour stand. For those
+/// the swing is counted when its window passes, which says the swing happened and nothing about
+/// whether it did anything. Calling that a hit is how ten swings a plugin silently refused came
+/// back as ten hits, and the refusal was looked for everywhere except in this sentence.
+fn struck(label: &str, count: i64, hurtable: bool) -> String {
+    if hurtable {
+        format!("Hit {label} {count} time(s)")
+    } else {
+        format!(
+            "Swung at {label} {count} time(s); it takes no damage, so the server confirmed nothing \
+             -- read the chat for a plugin that refused it"
+        )
+    }
+}
+
 /// Three swings the server said nothing about. What landed before them is named when anything did.
-fn swings_missed(label: &str, landed: i64) -> Failure {
+fn swings_missed(label: &str, landed: i64, hurtable: bool) -> Failure {
     let so_far = if landed > 0 {
-        format!("Hit {label} {landed} time(s), then the server registered no hit")
+        format!("{}, then the server registered no hit", struck(label, landed, hurtable))
     } else {
         format!("the server registered no hit on {label}")
     };
@@ -821,13 +841,13 @@ pub(super) fn interact(client: &Client, entity: Entity, aimed: Option<Vec3>) -> 
 mod tests {
     use azalea::Vec3;
 
-    use super::{swings_missed, under};
+    use super::{struck, swings_missed, under};
 
     /// The wording is the other kind of bot's too, and the suite reads it; the hits that landed are
     /// named only when there were any.
     #[test]
     fn three_missed_swings_are_a_retryable_failure_naming_what_landed_before() {
-        let none = swings_missed("chicken", 0);
+        let none = swings_missed("chicken", 0, true);
         assert_eq!(none.code, "SWING_MISSED");
         assert!(none.retryable);
         assert_eq!(
@@ -835,10 +855,21 @@ mod tests {
             "the server registered no hit on chicken after 3 swings; it may be out of reach, invulnerable, or already gone"
         );
 
-        let some = swings_missed("chicken", 2);
+        let some = swings_missed("chicken", 2, true);
         assert_eq!(
             some.message,
             "Hit chicken 2 time(s), then the server registered no hit after 3 swings; it may be out of reach, invulnerable, or already gone"
+        );
+    }
+
+    /// A swing at something the server never answers must not read as a hit. Both kinds of bot say
+    /// this sentence and the suite compares it against the other one's.
+    #[test]
+    fn a_target_that_takes_no_damage_is_swung_at_rather_than_hit() {
+        assert_eq!(struck("chicken", 1, true), "Hit chicken 1 time(s)");
+        assert_eq!(
+            struck("interaction", 1, false),
+            "Swung at interaction 1 time(s); it takes no damage, so the server confirmed nothing -- read the chat for a plugin that refused it"
         );
     }
 
