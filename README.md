@@ -60,17 +60,78 @@ docker run --rm --add-host host.docker.internal:host-gateway \
 
 ## Running it
 
-It reads everything from the environment, as the protocol document lists: `MCP_SERVER_HOST`,
-`MCP_SERVER_PORT`, `BOT_NAME`, `HEALTH_PORT`, `RECONNECT_MIN_MS`, `RECONNECT_MAX_MS`, and
-`BOT_LINK_TOKEN`, which goes into `hello` as `linkToken` when set so a server that holds one can
-tell its own bots from anything else that reached the port. The operator sets it from the
-server's link Secret; a bot run by hand against a server without one leaves it unset.
+It reads everything from the environment. Everything but the three `BOT_AUTH*` is the protocol
+document's; those three are this image's own, because which account a bot joins a game server with
+is not something the mcp-server it links to has an opinion about.
+
+| variable | meaning | default |
+| --- | --- | --- |
+| `MCP_SERVER_HOST` | the mcp-server to dial | `127.0.0.1` |
+| `MCP_SERVER_PORT` | | `8765` |
+| `BOT_NAME` | the name sent in `hello`, and the name an agent addresses | `HOSTNAME`, else `azalea`. A compose replica has no name of its own, so it takes its container's, which is what `--scale bot=N` needs to mean anything |
+| `BOT_LINK_TOKEN` | goes into `hello` as `linkToken`, so a server that holds one can tell its own bots from anything else that reached the port. The operator sets it from the server's link Secret; a bot run by hand against a server without one leaves it unset | unset: no `linkToken` in `hello` |
+| `HEALTH_PORT` | where `/healthz` and `/readyz` are served | `8080` |
+| `RECONNECT_MIN_MS`, `RECONNECT_MAX_MS` | backoff bounds for redialling | `500`, `15000` |
+| `BOT_AUTH` | `offline` or `microsoft`. Anything else and the bot says so and stops, rather than guessing | `offline` |
+| `BOT_AUTH_ACCOUNT` | `microsoft` only, and required: the account to log in as, which is the key its cached credential is held under. Usually the email | unset |
+| `BOT_AUTH_CACHE` | `microsoft` only: the file azalea keeps the credential in. A directory of its own, so the volume that carries a login carries nothing else | `/auth/azalea-auth.json` |
 
 ```sh
 docker run --rm -e MCP_SERVER_HOST=host.docker.internal -e BOT_NAME=a1 bot-azalea:local-mc26.1.2
 ```
 
 `python3 ../mcp-server/dev/conform.py 18777` holds it to the bot's half of the protocol.
+
+### Offline, which is the default
+
+The bot sends a username and the game server takes it on trust, which needs `online-mode=false` in
+that server's `server.properties`. That is a real cost to whoever runs it, and it is theirs and not
+the bot's: with authentication off, anyone who can reach the port can join under any name, including
+a name the server has opped, so the server has to be unreachable from the internet or sit behind a
+proxy that authenticates in front of it. Offline UUIDs are derived from the name rather than issued
+with the account, so homes, permissions and inventories keyed by UUID belong to the name, and a world
+moved between the two modes leaves the player data it already had behind.
+
+It is also the only one of the two modes `docker compose up --scale bot=N` means anything in:
+replicas share every environment variable, and the only thing that tells them apart is the hostname
+each takes its name from.
+
+### Microsoft, for a server that stays in online mode
+
+One Minecraft account is one player, so these are services written out by hand, one account each,
+never `--scale`. Log in once, with a terminal attached:
+
+```sh
+docker compose run --rm bot-login
+# or, without compose:
+docker run --rm -it -v azalea-auth:/auth -e BOT_AUTH_ACCOUNT=you@example.com \
+    bot-azalea:local-mc26.1.2 login
+```
+
+That is the image run with its one argument, `login`: azalea prints a Microsoft link with the code
+already in it, waits for somebody to open it, writes the credential into `BOT_AUTH_CACHE` and exits.
+The bot mounts the same volume and refreshes from that file at every start. Started with no cache to
+read it writes what is wrong and exits non-zero, rather than linking and then failing every join
+afterwards, which reads as the game server's fault.
+
+The device flow is what it is kept away from, because inside a long-running bot both halves of it are
+lost -- the link goes to a log nobody is attached to, and the wait holds the join that asked for it.
+It is kept away from, not made impossible, and two paths still reach it. A cache that exists but
+holds nothing under this `BOT_AUTH_ACCOUNT` -- a typo, or a volume logged in to under another
+account -- drops the start-up sign-in into it; that one is bounded, and the bot gives up after a
+minute and says which of the two it was. The other is not bounded: a refresh token lasts about
+ninety days, and a bot still running past that gets `InvalidSession` mid-join, which azalea answers
+by refreshing, which with nothing to refresh from starts the device flow in the join's own thread
+with no deadline on it. Log in again before that, and if a long-lived bot ever does go quiet on a
+join, that is the first thing to look at.
+
+The account decides the name. `join-server` may ask for another one and cannot have it: the bot joins
+as the account and says so, in the answer to `connect` and in a `warn` over the link. Set `BOT_NAME`
+to the account's Minecraft name and nothing diverges.
+
+One thing has not moved with the mode: `send-chat` still refuses with `CHAT_UNSIGNED` against a
+server that enforces secure chat. That refusal reads a flag in the login packet and predates there
+being an account that could hold a signing key at all; it has not been retested against one.
 
 ## What was changed underneath
 

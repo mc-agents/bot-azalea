@@ -3,6 +3,7 @@ use std::collections::{HashMap, VecDeque};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use azalea::FormattedText;
+use azalea::account::Account;
 use azalea::core::entity_id::MinecraftEntityId;
 use serde_json::{Map, Value, json};
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
@@ -20,6 +21,10 @@ pub const MINECRAFT_VERSION: &str = "26.1.2";
 /// cells rather than locks: nothing here is ever touched from two places at once.
 pub struct Bot {
     pub config: Config,
+    /// The account every join is made with, or `None` when the bot authenticates offline and the
+    /// name a connect asks for is all the identity there is. Signed in once at start-up, because a
+    /// join is not the moment to find out that a credential is gone.
+    pub account: Option<Account>,
     outbox: RefCell<Option<mpsc::UnboundedSender<Vec<u8>>>>,
     linked: Cell<bool>,
     /// Calls in flight by id. The sender is taken out when a cancel arrives; the entry stays until the
@@ -65,9 +70,10 @@ pub struct Bot {
 }
 
 impl Bot {
-    pub fn new(config: Config) -> Bot {
+    pub fn new(config: Config, account: Option<Account>) -> Bot {
         Bot {
             config,
+            account,
             outbox: RefCell::new(None),
             linked: Cell::new(false),
             calls: RefCell::new(HashMap::new()),

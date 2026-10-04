@@ -184,14 +184,14 @@ pub fn connect(bot: &Rc<Bot>, message: &Value) {
     let id = message["id"].clone();
     let host = message["host"].as_str().unwrap_or("127.0.0.1").to_owned();
     let port = message["port"].as_u64().unwrap_or(25565) as u16;
-    let username = message["username"].as_str().unwrap_or(&bot.config.bot_name).to_owned();
+    let asked = message["username"].as_str().unwrap_or(&bot.config.bot_name).to_owned();
     let spawn_timeout = Duration::from_millis(message["spawnTimeoutMs"].as_u64().unwrap_or(60_000));
 
-    let work = join(bot.clone(), host, port, username, spawn_timeout);
+    let work = join(bot.clone(), host, port, asked, spawn_timeout);
     calls::run(bot, id, "connect".into(), spawn_timeout + Duration::from_secs(2), work);
 }
 
-async fn join(bot: Rc<Bot>, host: String, port: u16, username: String, spawn_timeout: Duration) -> Outcome {
+async fn join(bot: Rc<Bot>, host: String, port: u16, asked: String, spawn_timeout: Duration) -> Outcome {
     leave(&bot);
     torn_down(&bot).await;
     bot.status("connecting", None);
@@ -206,8 +206,26 @@ async fn join(bot: Rc<Bot>, host: String, port: u16, username: String, spawn_tim
     static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
+    /*
+    Offline, the name a connect asks for is the whole of the bot's identity: azalea derives a UUID
+    from it and the server takes both on trust. A Microsoft account arrives with the one name Mojang
+    will vouch for and nothing else can be joined under, so the asked-for name is not honoured --
+    and is not quietly dropped either, because a name swapped in silence is a name every tool that
+    reads the status goes on to repeat.
+    */
+    let (account, username) = match &bot.account {
+        None => (Account::offline(&asked), asked.clone()),
+        Some(account) => (account.clone(), account.username().to_string()),
+    };
+    if username != asked {
+        bot.log(
+            "warn",
+            format!("joining as {username}, not {asked}: the Microsoft account decides the name"),
+        );
+    }
+
     let client = start(
-        Account::offline(&username),
+        account,
         ConnectOpts {
             address: resolved,
             server_proxy: None,
@@ -252,7 +270,13 @@ async fn join(bot: Rc<Bot>, host: String, port: u16, username: String, spawn_tim
     match tokio::time::timeout(spawn_timeout, outcome).await {
         Ok(Ok(Ok(()))) => {
             bot.status("ready", None);
-            Ok(Answer::text(format!("Joined {address} as {username}")))
+            if username == asked {
+                Ok(Answer::text(format!("Joined {address} as {username}")))
+            } else {
+                Ok(Answer::text(format!(
+                    "Joined {address} as {username}, not as {asked}: this bot authenticates with a Microsoft account, and the account's own name is the one the server sees"
+                )))
+            }
         }
         Ok(Ok(Err(failure))) => Err(failure),
         _ => {

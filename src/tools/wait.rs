@@ -43,7 +43,7 @@ mod tests {
     /// slept a wall-clock tick for each one asked for and answered that it had waited.
     #[tokio::test]
     async fn without_a_connection_the_wait_says_the_bot_is_not_in_a_world() {
-        let bot = Rc::new(Bot::new(Config::from_env()));
+        let bot = Rc::new(Bot::new(Config::from_env().expect("a test sets no BOT_AUTH"), None));
 
         let outcome =
             tokio::time::timeout(Duration::from_millis(500), (WAIT_TICKS.run)(bot, json!({"ticks": 400}))).await;
