@@ -192,10 +192,13 @@ jobs:
       # reason: the registry used to sit behind Cloudflare, which cuts an upload at 100MB, and the
       # compiled-dependencies layer of a Rust build is past that -- the arm64 job died twice on the
       # same blob, mid-PUT, once the layer changed and had to be sent whole. Cloudflare is no longer
-      # in front of it, and the limit that replaced the 100MB one is softer and worse: the registry
-      # is reached over one home uplink, and bot-fabric's publish failed three times running on the
-      # cache export alone. So this stays where it is for a second reason now. A miss costs a full
-      # compile, which is also why it is a cache and not, as there, nothing at all.
+      # in front of it, and what the registry is now is reached over one home uplink, where a cache
+      # export doubles what a publish sends for no compile saved on this runner. So it stays here
+      # for a second reason. A miss costs a full compile, which is why there is a cache at all.
+      #
+      # Not because an upload that is slow will fail: bot-fabric's publishes that did were cut at
+      # Traefik's 60s readTimeout in front of Harbor, a clock rather than a pipe, and raising it is
+      # what fixed them. Size is a reason to keep an upload off this link, not a reason it breaks.
       - uses: docker/build-push-action@v6
         with:
           context: .
