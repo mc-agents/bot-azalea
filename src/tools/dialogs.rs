@@ -250,7 +250,7 @@ const SUGGEST_COMMAND: &str = "Copy to Chat Screen";
 /// writes its payload as a bare NBT tag. 26.1 reads an optional tag behind a length prefix, and a
 /// server that reads the packet azalea writes drops the connection. Once azalea matches it, this is
 /// `client.write_packet(ServerboundCustomClickAction { .. })`.
-fn custom_click(client: &Client, id: &str, payload: Option<&NbtTag>) -> Result<(), Failure> {
+pub fn custom_click(client: &Client, id: &str, payload: Option<&NbtTag>) -> Result<(), Failure> {
     let id = Identifier::new(id);
     let mut tag = Vec::new();
     match payload {

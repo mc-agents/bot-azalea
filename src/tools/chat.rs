@@ -4,7 +4,7 @@ use serde_json::Value;
 use simdnbt::owned::NbtTag;
 
 use super::args::text;
-use super::{Tool, in_world, tick};
+use super::{Tool, dialogs, in_world, tick};
 use crate::calls::{Answer, Failure};
 use crate::hud;
 
@@ -51,8 +51,9 @@ pub const SEND_CHAT: Tool = Tool {
 /// Press something a server wrote in chat: a quest's "[Accept]", a shop's "[Page 2]". Without this
 /// the flows a player drives by clicking could only be driven by guessing the command behind them.
 ///
-/// Only the clicks the game makes inside itself are pressed. The rest leave it -- a browser, a
-/// file, the clipboard -- and a line from a server does not get to send the host anywhere.
+/// Only the clicks the game makes inside itself are pressed: a command, a dialog, and a plugin's
+/// custom action, which is a packet back to the server. The rest leave it -- a browser, a file, the
+/// clipboard -- and a line from a server does not get to send the host anywhere.
 pub const CLICK_CHAT: Tool = Tool {
     name: "click-chat",
     run: |bot, args| {
@@ -103,11 +104,14 @@ pub const CLICK_CHAT: Tool = Tool {
                     opened = Some(screen(&shown));
                     hud::show_dialog(&bot, Some(shown));
                 }
+                ClickEvent::Custom { id, payload } => {
+                    in_world(&bot, |game| dialogs::custom_click(&game.client, id, Some(payload)))??;
+                }
                 other => {
                     return Err(Failure::refused(
                         "CLICK_NOT_IN_GAME",
                         format!(
-                            "\"{}\" is a {} click, and only run_command and show_dialog are pressed from here. The rest leave the game -- a browser, a file, the clipboard -- which is not this bot's to do.",
+                            "\"{}\" is a {} click, and only run_command, show_dialog and custom are pressed from here. The rest leave the game -- a browser, a file, the clipboard -- which is not this bot's to do.",
                             found.text,
                             action(other)
                         ),
@@ -140,8 +144,12 @@ struct Clickable {
 }
 
 impl Clickable {
+    /// A custom click with its id, which is the one thing that tells two of them apart.
     fn describe(&self) -> String {
-        format!("\"{}\" ({})", self.text, action(&self.event))
+        match &self.event {
+            ClickEvent::Custom { id, .. } => format!("\"{}\" (custom {id})", self.text),
+            event => format!("\"{}\" ({})", self.text, action(event)),
+        }
     }
 }
 

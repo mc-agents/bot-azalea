@@ -1,9 +1,6 @@
 use serde::Serialize;
 #[cfg(feature = "simdnbt")]
-use simdnbt::{
-    DeserializeError,
-    owned::{Nbt, NbtCompound},
-};
+use simdnbt::{DeserializeError, owned::NbtCompound};
 
 #[cfg(feature = "simdnbt")]
 use crate::get_in_compound;
@@ -99,9 +96,12 @@ define_click_event_struct! {
     copy_to_clipboard: CopyToClipboard {
         value: String,
     },
+    // mc-agents: the payload was read as a root compound, which wraps any other tag in one under an
+    // empty key, and a click pressed from chat sends it back to the server that wrote it. It is kept
+    // as the tag it arrived as.
     custom: Custom {
         id: String,
         #[cfg(feature = "simdnbt")]
-        payload: Nbt,
+        payload: simdnbt::owned::NbtTag,
     },
 }
